@@ -24,6 +24,7 @@ val epubcheck by configurations.creating
 
 dependencies {
     implementation("org.jsoup:jsoup:1.23.2")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.19.2")
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")

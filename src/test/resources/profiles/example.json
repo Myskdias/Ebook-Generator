@@ -1,0 +1,7 @@
+{
+  "name" : "Example Site",
+  "domain" : "example.com",
+  "titleSelector" : "h2.chapter-title",
+  "contentSelector" : "main#reader",
+  "nextChapterSelector" : "a.next"
+}
