@@ -51,7 +51,7 @@ class EpubGeneratorTest {
             assertTrue(opf.indexOf("chapter-0001.xhtml") < opf.indexOf("chapter-0002.xhtml"));
             assertTrue(nav.contains("Chapter &lt;1&gt;"));
             assertTrue(chapter.contains("First &amp; second."));
-            assertTrue(chapter.contains("L'été commence."));
+            assertTrue(chapter.contains("L&apos;été commence."));
             assertTrue(chapter.contains("<p>"));
             assertFalse(opf.contains("CoverImage"));
 
