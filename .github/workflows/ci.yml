@@ -19,5 +19,7 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Check visual selector JavaScript
+        run: node --check src/main/resources/com/myskdias/ebookgenerator/desktop/selector.js
       - name: Run JUnit and EPUBCheck
         run: ./gradlew test epubcheckSample
