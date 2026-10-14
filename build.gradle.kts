@@ -3,7 +3,7 @@ plugins {
     application
 }
 
-group = "io.github.myskdias"
+group = "com.myskdias"
 version = "0.1.0-SNAPSHOT"
 
 repositories {
@@ -17,7 +17,7 @@ java {
 }
 
 application {
-    mainClass = "io.github.myskdias.ebookgenerator.Main"
+    mainClass = "com.myskdias.ebookgenerator.Main"
 }
 
 val epubcheck by configurations.creating

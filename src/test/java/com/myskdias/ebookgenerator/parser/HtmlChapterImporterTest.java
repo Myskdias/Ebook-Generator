@@ -1,8 +1,8 @@
-package io.github.myskdias.ebookgenerator.parser;
+package com.myskdias.ebookgenerator.parser;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.github.myskdias.ebookgenerator.model.Chapter;
+import com.myskdias.ebookgenerator.model.Chapter;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 

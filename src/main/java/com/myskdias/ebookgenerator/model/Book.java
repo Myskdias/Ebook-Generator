@@ -1,4 +1,4 @@
-package io.github.myskdias.ebookgenerator.model;
+package com.myskdias.ebookgenerator.model;
 
 import java.util.List;
 import java.util.Objects;

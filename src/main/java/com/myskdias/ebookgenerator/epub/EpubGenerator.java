@@ -1,7 +1,7 @@
-package io.github.myskdias.ebookgenerator.epub;
+package com.myskdias.ebookgenerator.epub;
 
-import io.github.myskdias.ebookgenerator.model.Book;
-import io.github.myskdias.ebookgenerator.model.Chapter;
+import com.myskdias.ebookgenerator.model.Book;
+import com.myskdias.ebookgenerator.model.Chapter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;

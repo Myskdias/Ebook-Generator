@@ -1,9 +1,9 @@
-package io.github.myskdias.ebookgenerator;
+package com.myskdias.ebookgenerator;
 
-import io.github.myskdias.ebookgenerator.epub.EpubGenerator;
-import io.github.myskdias.ebookgenerator.model.Book;
-import io.github.myskdias.ebookgenerator.model.Chapter;
-import io.github.myskdias.ebookgenerator.parser.HtmlChapterImporter;
+import com.myskdias.ebookgenerator.epub.EpubGenerator;
+import com.myskdias.ebookgenerator.model.Book;
+import com.myskdias.ebookgenerator.model.Chapter;
+import com.myskdias.ebookgenerator.parser.HtmlChapterImporter;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;

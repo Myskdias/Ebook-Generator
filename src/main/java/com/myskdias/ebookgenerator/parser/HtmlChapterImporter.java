@@ -1,6 +1,6 @@
-package io.github.myskdias.ebookgenerator.parser;
+package com.myskdias.ebookgenerator.parser;
 
-import io.github.myskdias.ebookgenerator.model.Chapter;
+import com.myskdias.ebookgenerator.model.Chapter;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
