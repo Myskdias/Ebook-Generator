@@ -1,0 +1,7 @@
+{
+  "name": "Local HTML articles",
+  "domain": "example.com",
+  "titleSelector": "article h1",
+  "contentSelector": "article",
+  "nextChapterSelector": ""
+}

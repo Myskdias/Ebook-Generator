@@ -4,6 +4,11 @@ import com.myskdias.ebookgenerator.epub.EpubGenerator;
 import com.myskdias.ebookgenerator.model.Book;
 import com.myskdias.ebookgenerator.model.Chapter;
 import com.myskdias.ebookgenerator.parser.HtmlChapterImporter;
+import com.myskdias.ebookgenerator.parser.ParserProfile;
+import com.myskdias.ebookgenerator.parser.ParserProfileStore;
+import com.myskdias.ebookgenerator.parser.ProfiledHtmlParser;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +29,7 @@ public final class Main {
         String author = null;
         String language = "en";
         Path output = null;
+        Path profilePath = null;
         List<Path> inputs = new ArrayList<>();
 
         for (int i = 0; i < args.length; i++) {
@@ -32,6 +38,7 @@ public final class Main {
                 case "--author" -> author = requireValue(args, ++i, "--author");
                 case "--language" -> language = requireValue(args, ++i, "--language");
                 case "--output" -> output = Path.of(requireValue(args, ++i, "--output"));
+                case "--profile" -> profilePath = Path.of(requireValue(args, ++i, "--profile"));
                 default -> {
                     if (args[i].startsWith("--")) {
                         throw new IllegalArgumentException("Unknown option: " + args[i]);
@@ -46,9 +53,16 @@ public final class Main {
         }
 
         HtmlChapterImporter importer = new HtmlChapterImporter();
+        ParserProfile profile = profilePath == null ? null : new ParserProfileStore().load(profilePath);
+        ProfiledHtmlParser profiledParser = new ProfiledHtmlParser();
         List<Chapter> chapters = new ArrayList<>();
         for (Path input : inputs) {
-            chapters.add(importer.importFile(input));
+            if (profile == null) {
+                chapters.add(importer.importFile(input));
+            } else {
+                String html = Files.readString(input, StandardCharsets.UTF_8);
+                chapters.add(profiledParser.parse(html, input.toUri(), profile).chapter());
+            }
         }
         Path file = new EpubGenerator().generate(new Book(title, author, language, chapters), output);
         System.out.println("Generated " + file + " (" + chapters.size() + " chapters)");
@@ -62,6 +76,6 @@ public final class Main {
     }
 
     private static void usage() {
-        System.out.println("Usage: --title TITLE --author AUTHOR [--language en] --output BOOK.epub CHAPTER1.html [CHAPTER2.html ...]");
+        System.out.println("Usage: --title TITLE --author AUTHOR [--language en] [--profile PROFILE.json] --output BOOK.epub CHAPTER1.html [CHAPTER2.html ...]");
     }
 }
