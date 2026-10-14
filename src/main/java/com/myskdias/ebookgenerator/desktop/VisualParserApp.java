@@ -61,13 +61,13 @@ public final class VisualParserApp extends Application {
     private final ObjectMapper json = new ObjectMapper();
     private final Map<Role, TextField> selectors = new EnumMap<>(Role.class);
 
-    private final WebView browser = new WebView();
-    private final TextField profileName = new TextField();
-    private final TextField domainName = new TextField();
-    private final TextArea preview = new TextArea();
-    private final Label status = new Label("Open a local HTML chapter to begin.");
-    private final Label openedFile = new Label("No HTML file selected");
-    private final ToggleGroup roles = new ToggleGroup();
+    private WebView browser;
+    private TextField profileName;
+    private TextField domainName;
+    private TextArea preview;
+    private Label status;
+    private Label openedFile;
+    private ToggleGroup roles;
 
     private Stage stage;
     private Path sourcePath;
@@ -79,6 +79,14 @@ public final class VisualParserApp extends Application {
     @Override
     public void start(Stage primaryStage) {
         stage = primaryStage;
+        // WebView/WebEngine and controls must be created on the JavaFX Application Thread.
+        browser = new WebView();
+        profileName = new TextField();
+        domainName = new TextField();
+        preview = new TextArea();
+        status = new Label("Open a local HTML chapter to begin.");
+        openedFile = new Label("No HTML file selected");
+        roles = new ToggleGroup();
         profileName.setPromptText("Profile name (e.g. NovelFull)");
         domainName.setPromptText("Domain (e.g. example.com)");
         preview.setEditable(false);
