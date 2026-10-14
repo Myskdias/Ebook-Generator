@@ -1,6 +1,7 @@
 plugins {
     java
     application
+    id("org.openjfx.javafxplugin") version "0.1.0"
 }
 
 group = "com.myskdias"
@@ -14,6 +15,11 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
     }
+}
+
+javafx {
+    version = "25.0.4"
+    modules("javafx.controls", "javafx.web")
 }
 
 application {
@@ -60,4 +66,12 @@ tasks.register<JavaExec>("epubcheckSample") {
     classpath = epubcheck
     mainClass.set("com.adobe.epubcheck.tool.Checker")
     args(layout.buildDirectory.file("samples/demo.epub").get().asFile.path)
+}
+
+tasks.register<JavaExec>("parserEditor") {
+    group = "application"
+    description = "Open the visual HTML parser editor (local HTML files)."
+    dependsOn(tasks.classes)
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.myskdias.ebookgenerator.desktop.VisualParserLauncher")
 }
