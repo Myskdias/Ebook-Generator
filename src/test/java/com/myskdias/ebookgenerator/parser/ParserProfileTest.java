@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -69,5 +72,55 @@ class ParserProfileTest {
         assertTrue(output.chapter().content().contains("Hello"));
         assertTrue(output.chapter().content().contains("World"));
         assertTrue(output.nextChapterUri().isEmpty());
+    }
+
+    @Test void loadsExistingJsonAndRoundTripsExclusions() throws Exception {
+        var store = new ParserProfileStore();
+        var old = store.load(Path.of("src/test/resources/profiles/article.json"));
+        assertEquals(List.of(), old.excludedSelectors());
+        var exclusions = new ArrayList<>(List.of(" .ads ", "#reader > div:nth-of-type(2)", ".ads"));
+        var profile = new ParserProfile("Café", "example.com", "h2", "main", "", exclusions);
+        exclusions.clear();
+        assertEquals(List.of(".ads", "#reader > div:nth-of-type(2)"), profile.excludedSelectors());
+        assertThrows(UnsupportedOperationException.class, () -> profile.excludedSelectors().add("p"));
+        Path path = temp.resolve("exclusions.json");
+        store.save(path, profile);
+        assertEquals(profile, store.load(path));
+        assertTrue(Files.readString(path).contains("excludedSelectors"));
+        Files.writeString(path, """
+            {"name":"Old", "domain":"example.com", "titleSelector":"h2",
+             "contentSelector":"main", "excludedSelectors":null}
+            """);
+        assertTrue(store.load(path).excludedSelectors().isEmpty());
+    }
+
+    @Test void rejectsMalformedOrBlankExclusions() {
+        for (String selector : List.of("", "  ", "div[")) {
+            assertThrows(IllegalArgumentException.class, () ->
+                new ParserProfile("Site", "example.com", "h1", "main", "", List.of(selector)));
+        }
+    }
+
+    @Test void resolvesContextualExclusionsBeforeMutatingAndPreservesNavigation() {
+        String html = """
+            <h1>Chapter</h1><main id="reader">
+            <div><p>Ad one</p></div><div><p>Ad two</p></div><p>Story.</p>
+            <p>Translator note.</p><div class="ads"><a class="next" href="/2">Next</a></div>
+            </main>
+            """;
+        var profile = new ParserProfile("Site", "example.com", "h1", "main", ".next",
+            List.of("body > main > div:nth-of-type(1)", "#reader > div:nth-of-type(2)", ".ads", ".missing"));
+        var result = new ProfiledHtmlParser().parse(html, URI.create("https://example.com/1"), profile);
+        assertEquals("Story.\n\nTranslator note.", result.chapter().content());
+        assertEquals(URI.create("https://example.com/2"), result.nextChapterUri().orElseThrow());
+    }
+
+    @Test void exclusionsWorkInParagraphFreeContentAndCannotRemoveTheContainer() {
+        String html = "<h1>Title</h1><main>Story<br><span class='ad'>Ad</span>End</main>";
+        var profile = new ParserProfile("Site", "example.com", "h1", "main", "", List.of(".ad"));
+        assertEquals("Story\nEnd", new ProfiledHtmlParser()
+            .parse(html, temp.toUri(), profile).chapter().content());
+        var bad = new ParserProfile("Site", "example.com", "h1", "main", "", List.of("body"));
+        assertThrows(IllegalArgumentException.class, () -> new ProfiledHtmlParser().parse(html, temp.toUri(), bad));
     }
 }

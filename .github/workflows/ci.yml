@@ -21,5 +21,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Check visual selector JavaScript
         run: node --check src/main/resources/com/myskdias/ebookgenerator/desktop/selector.js
-      - name: Run JUnit and EPUBCheck
+      - name: Run JUnit, WebView integration tests and EPUBCheck (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a ./gradlew test epubcheckSample
+      - name: Run JUnit, WebView integration tests and EPUBCheck (Windows / macOS)
+        if: runner.os != 'Linux'
         run: ./gradlew test epubcheckSample
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: |
+            build/reports/tests/test
+            build/test-results/test

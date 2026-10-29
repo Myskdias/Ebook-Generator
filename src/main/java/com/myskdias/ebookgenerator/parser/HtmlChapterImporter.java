@@ -15,7 +15,7 @@ import org.jsoup.nodes.Element;
 public final class HtmlChapterImporter {
 
     public Chapter importFile(Path path) throws IOException {
-        Document doc = Jsoup.parse(path.toFile(), "UTF-8");
+        Document doc = Jsoup.parse(HtmlSource.read(path).html(), path.toUri().toString());
 
         Element heading = doc.selectFirst("article h1, main h1, h1, article h2, main h2, h2");
         String title = heading != null ? heading.text().strip() : doc.title().strip();

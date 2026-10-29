@@ -1,6 +1,7 @@
 package com.myskdias.ebookgenerator.parser;
 
 import java.net.IDN;
+import java.util.List;
 import java.util.Locale;
 import org.jsoup.Jsoup;
 import org.jsoup.select.Selector;
@@ -14,8 +15,15 @@ public record ParserProfile(
     String domain,
     String titleSelector,
     String contentSelector,
-    String nextChapterSelector
+    String nextChapterSelector,
+    List<String> excludedSelectors
 ) {
+    // Preserve source compatibility as well as compatibility with existing five-field JSON.
+    public ParserProfile(String name, String domain, String titleSelector,
+                         String contentSelector, String nextChapterSelector) {
+        this(name, domain, titleSelector, contentSelector, nextChapterSelector, List.of());
+    }
+
     public ParserProfile {
         name = requireNonBlank(name, "Profile name");
         domain = normalizedDomain(domain);
@@ -23,6 +31,9 @@ public record ParserProfile(
         contentSelector = checkedSelector(contentSelector, "Content selector", true);
         // A local HTML import can work without a next-chapter link.
         nextChapterSelector = checkedSelector(nextChapterSelector, "Next-chapter selector", false);
+        excludedSelectors = excludedSelectors == null ? List.of() : excludedSelectors.stream()
+            .map(value -> checkedSelector(value, "Excluded selector", true))
+            .distinct().toList();
     }
 
     private static String requireNonBlank(String value, String label) {

@@ -10,6 +10,15 @@
   let previousOffset = "";
   let pending = null;
 
+  // Editor decorations do not add children to source blocks or change their selectors.
+  const decorations = document.createElement("style");
+  decorations.textContent = `
+    div:empty, ins:empty { min-height: 24px; outline: 1px dashed #999; }
+    div:empty::before, ins:empty::before { content: "Empty block"; color: #666; font: 12px sans-serif; }
+    [data-ebook-excluded="true"] { outline: 3px dashed #c33 !important; }
+  `;
+  document.head.appendChild(decorations);
+
   function clearHighlight() {
     if (!hovered) return;
     hovered.style.setProperty("outline", previousOutline, previousOutlinePriority);
@@ -54,6 +63,8 @@
   }
 
   function selectorFor(element) {
+    const sourceSelector = element.getAttribute("data-ebook-source-selector");
+    if (sourceSelector) return sourceSelector;
     const simple = simpleSelector(element);
     if (simple) return simple;
     const segments = [];
@@ -100,8 +111,29 @@
 
   // Never submit forms while the user is selecting DOM elements.
   document.addEventListener("submit", event => event.preventDefault(), true);
+  document.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") event.preventDefault();
+  }, true);
+  document.addEventListener("dragstart", event => event.preventDefault(), true);
 
   window.__ebookPicker = Object.freeze({
+    setExclusions(selectors) {
+      clearHighlight();
+      document.querySelectorAll('[data-ebook-excluded]').forEach(element =>
+        element.removeAttribute("data-ebook-excluded"));
+      selectors.forEach(selector => {
+        // Exact source mappings also work when stripped siblings changed DOM indices.
+        document.querySelectorAll('[data-ebook-source-selector]').forEach(element => {
+          if (element.getAttribute("data-ebook-source-selector") === selector) {
+            element.setAttribute("data-ebook-excluded", "true");
+          }
+        });
+        try {
+          document.querySelectorAll(selector).forEach(element =>
+            element.setAttribute("data-ebook-excluded", "true"));
+        } catch (_) { /* Jsoup may accept selectors that WebView does not support. */ }
+      });
+    },
     takeSelection() {
       const result = pending;
       pending = null;

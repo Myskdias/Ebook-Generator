@@ -4,11 +4,10 @@ import com.myskdias.ebookgenerator.epub.EpubGenerator;
 import com.myskdias.ebookgenerator.model.Book;
 import com.myskdias.ebookgenerator.model.Chapter;
 import com.myskdias.ebookgenerator.parser.HtmlChapterImporter;
+import com.myskdias.ebookgenerator.parser.HtmlSource;
 import com.myskdias.ebookgenerator.parser.ParserProfile;
 import com.myskdias.ebookgenerator.parser.ParserProfileStore;
 import com.myskdias.ebookgenerator.parser.ProfiledHtmlParser;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -60,7 +59,7 @@ public final class Main {
             if (profile == null) {
                 chapters.add(importer.importFile(input));
             } else {
-                String html = Files.readString(input, StandardCharsets.UTF_8);
+                String html = HtmlSource.read(input).html();
                 chapters.add(profiledParser.parse(html, input.toUri(), profile).chapter());
             }
         }

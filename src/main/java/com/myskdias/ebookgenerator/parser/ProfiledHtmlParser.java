@@ -34,7 +34,18 @@ public final class ProfiledHtmlParser {
         }
 
         // Never mutate the original document: the navigation selector may point inside the content.
-        Element clean = contentElement.clone();
+        Document contentDocument = document.clone();
+        Element clean = contentDocument.selectFirst(profile.contentSelector());
+        // Resolve all selectors in the complete, unchanged DOM before removing anything.
+        // Cloning only the content loses ancestors and breaks contextual/positional selectors.
+        List<Element> excluded = profile.excludedSelectors().stream()
+            .flatMap(selector -> contentDocument.select(selector).stream()).distinct().toList();
+        for (Element element : excluded) {
+            if (element == clean || clean.parents().contains(element)) {
+                throw new IllegalArgumentException("An excluded selector removes the chapter container");
+            }
+        }
+        excluded.forEach(Element::remove);
         clean.select("script, style, noscript, iframe, nav, footer, button").remove();
 
         List<String> paragraphs = clean.select("p").stream()
@@ -43,7 +54,7 @@ public final class ProfiledHtmlParser {
         String text;
         if (paragraphs.isEmpty()) {
             // For sites that use <br> instead of <p>, preserve line boundaries.
-            clean.select("br").forEach(br -> br.after("\n"));
+            // Jsoup wholeText already emits a newline for each <br>.
             text = clean.wholeText().strip().replaceAll("(?m)[ \t]+$", "")
                 .replaceAll("(?:\r?\n[ \t]*){2,}", "\n\n");
         } else {

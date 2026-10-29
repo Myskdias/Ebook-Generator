@@ -2,6 +2,7 @@ package com.myskdias.ebookgenerator.desktop;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myskdias.ebookgenerator.parser.HtmlSource;
 import com.myskdias.ebookgenerator.parser.ParsedChapter;
 import com.myskdias.ebookgenerator.parser.ParserProfile;
 import com.myskdias.ebookgenerator.parser.ParserProfileStore;
@@ -10,7 +11,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.Map;
@@ -25,7 +25,9 @@ import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
@@ -38,7 +40,6 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -54,7 +55,7 @@ import org.jsoup.nodes.Element;
  * not an exposed Java-to-JavaScript bridge.
  */
 public final class VisualParserApp extends Application {
-    private enum Role { TITLE, CONTENT, NEXT }
+    private enum Role { TITLE, CONTENT, NEXT, EXCLUDE }
 
     private final ParserProfileStore store = new ParserProfileStore();
     private final ProfiledHtmlParser parser = new ProfiledHtmlParser();
@@ -67,6 +68,9 @@ public final class VisualParserApp extends Application {
     private TextArea preview;
     private Label status;
     private Label openedFile;
+    private Label encodingInfo;
+    private CheckBox cssEnabled;
+    private ListView<String> exclusions;
     private ToggleGroup roles;
 
     private Stage stage;
@@ -81,11 +85,18 @@ public final class VisualParserApp extends Application {
         stage = primaryStage;
         // WebView/WebEngine and controls must be created on the JavaFX Application Thread.
         browser = new WebView();
+        browser.setContextMenuEnabled(false);
         profileName = new TextField();
         domainName = new TextField();
         preview = new TextArea();
         status = new Label("Open a local HTML chapter to begin.");
         openedFile = new Label("No HTML file selected");
+        encodingInfo = new Label();
+        encodingInfo.setWrapText(true);
+        cssEnabled = new CheckBox("Preview CSS (embedded / inline)");
+        cssEnabled.setOnAction(e -> reloadPreview());
+        exclusions = new ListView<>();
+        exclusions.setPrefHeight(95);
         roles = new ToggleGroup();
         profileName.setPromptText("Profile name (e.g. NovelFull)");
         domainName.setPromptText("Domain (e.g. example.com)");
@@ -102,7 +113,7 @@ public final class VisualParserApp extends Application {
         Button loadProfile = new Button("Load profile...");
         loadProfile.setOnAction(e -> loadProfile());
         openedFile.setStyle("-fx-text-fill: #666666;");
-        HBox header = new HBox(12, openHtml, loadProfile, openedFile);
+        HBox header = new HBox(12, openHtml, loadProfile, cssEnabled, openedFile);
         header.setAlignment(Pos.CENTER_LEFT);
         header.setPadding(new Insets(0, 0, 12, 0));
         HBox.setHgrow(openedFile, Priority.ALWAYS);
@@ -122,6 +133,7 @@ public final class VisualParserApp extends Application {
             if (current == Worker.State.SUCCEEDED && sourceHtml != null) {
                 try {
                     browser.getEngine().executeScript(selectionScript);
+                    syncExclusions();
                     status.setText("Page ready. Select a field on the right, then click its element.");
                 } catch (RuntimeException ex) {
                     report("Could not install the element picker", ex);
@@ -130,6 +142,7 @@ public final class VisualParserApp extends Application {
                 report("Could not open the HTML preview", browser.getEngine().getLoadWorker().getException());
             }
         });
+        browser.getEngine().setCreatePopupHandler(config -> null);
 
         try (InputStream stream = getClass().getResourceAsStream("selector.js")) {
             if (stream == null) throw new IOException("Missing selector.js resource");
@@ -158,21 +171,35 @@ public final class VisualParserApp extends Application {
         Label heading = new Label("Parser profile");
         heading.setStyle("-fx-font-size: 19px; -fx-font-weight: bold;");
         panel.getChildren().addAll(heading, new Label("Profile name"), profileName,
-            new Label("Website domain"), domainName, new Separator(),
+            new Label("Website domain"), domainName, encodingInfo, new Separator(),
             new Label("1. Select a field; 2. Click its element in the page."));
 
         addRole(panel, Role.TITLE, "Chapter title", "e.g. h2.chapter-title");
         addRole(panel, Role.CONTENT, "Chapter content", "e.g. div#chapter-content");
         addRole(panel, Role.NEXT, "Next chapter (optional)", "e.g. a.next-chapter");
+        addRole(panel, Role.EXCLUDE, "Block to exclude (ads, etc.)", "e.g. .ads");
 
         parentButton = new Button("Select parent element");
         parentButton.setOnAction(e -> chooseParent());
         parentButton.setMaxWidth(Double.MAX_VALUE);
         panel.getChildren().add(parentButton);
 
+        Button addExclusion = new Button("Add exclusion");
+        addExclusion.setOnAction(e -> addExclusion());
+        Button removeExclusion = new Button("Remove selected");
+        removeExclusion.setOnAction(e -> {
+            int index = exclusions.getSelectionModel().getSelectedIndex();
+            if (index >= 0) exclusions.getItems().remove(index);
+        });
+        exclusions.getItems().addListener((javafx.collections.ListChangeListener<String>) c -> syncExclusions());
+        panel.getChildren().addAll(new HBox(8, addExclusion, removeExclusion), exclusions);
+
         Label explanation = new Label(
             "Click the whole chapter container, not only one paragraph. "
-            + "Use 'Select parent element' if your click selects a child.");
+            + "Use 'Select parent element' if your click selects a child. "
+            + "To exclude an ad, select its block (dashed boxes mark empty blocks), "
+            + "then Add exclusion. Red outlines mark excluded blocks. "
+            + "External stylesheets and resources stay blocked in both CSS modes.");
         explanation.setWrapText(true);
         panel.getChildren().addAll(explanation, new Separator());
 
@@ -227,18 +254,54 @@ public final class VisualParserApp extends Application {
         java.io.File file = chooser.showOpenDialog(stage);
         if (file == null) return;
         try {
-            sourcePath = file.toPath();
-            sourceHtml = Files.readString(sourcePath, StandardCharsets.UTF_8);
+            Path path = file.toPath();
+            HtmlSource source = HtmlSource.read(path);
+            sourcePath = path;
+            sourceHtml = source.html();
+            long replacements = source.replacementCharacters();
+            encodingInfo.setText("Encoding: " + source.charset().name()
+                + (replacements == 0 ? "" : " — " + replacements
+                    + " replacement character(s) already in the source; re-export the HTML to recover them."));
             String baseName = file.getName().replaceFirst("(?i)\\.html?$", "");
             if (profileName.getText().isBlank()) profileName.setText(baseName);
             openedFile.setText(file.getName());
             preview.clear();
-            browser.getEngine().loadContent(HtmlPreviewSanitizer.sanitize(sourceHtml), "text/html");
-            status.setText("Loading HTML preview...");
+            reloadPreview();
         } catch (IOException ex) {
-            sourceHtml = null;
-            sourcePath = null;
             report("Could not read the HTML file", ex);
+        }
+    }
+
+    private void reloadPreview() {
+        if (sourceHtml == null) return;
+        browser.getEngine().loadContent(HtmlPreviewSanitizer.sanitize(sourceHtml, cssEnabled.isSelected()),
+            "text/html");
+        status.setText("Loading HTML preview...");
+    }
+
+    private void addExclusion() {
+        String selector = selectors.get(Role.EXCLUDE).getText().strip();
+        if (selector.isEmpty()) {
+            status.setText("Select a block to exclude first.");
+            return;
+        }
+        try {
+            // Validate independently of title/content fields, which may still be empty.
+            Jsoup.parse(sourceHtml == null ? "" : sourceHtml).select(selector);
+            if (!exclusions.getItems().contains(selector)) exclusions.getItems().add(selector);
+            status.setText("Excluded: " + selector + ". Preview extraction to check the result.");
+        } catch (RuntimeException ex) {
+            status.setText("Invalid exclusion: " + ex.getMessage());
+        }
+    }
+
+    private void syncExclusions() {
+        if (sourceHtml == null || browser.getEngine().getLoadWorker().getState() != Worker.State.SUCCEEDED) return;
+        try {
+            browser.getEngine().executeScript("if (window.__ebookPicker) window.__ebookPicker.setExclusions("
+                + json.writeValueAsString(exclusions.getItems()) + ")");
+        } catch (Exception ex) {
+            status.setText("Could not highlight exclusions: " + ex.getMessage());
         }
     }
 
@@ -282,7 +345,8 @@ public final class VisualParserApp extends Application {
             if (domain.isBlank()) domain = "preview.local";
         }
         return new ParserProfile(name, domain, selectors.get(Role.TITLE).getText(),
-            selectors.get(Role.CONTENT).getText(), selectors.get(Role.NEXT).getText());
+            selectors.get(Role.CONTENT).getText(), selectors.get(Role.NEXT).getText(),
+            java.util.List.copyOf(exclusions.getItems()));
     }
 
     private void previewExtraction() {
@@ -344,6 +408,8 @@ public final class VisualParserApp extends Application {
             selectors.get(Role.TITLE).setText(profile.titleSelector());
             selectors.get(Role.CONTENT).setText(profile.contentSelector());
             selectors.get(Role.NEXT).setText(profile.nextChapterSelector());
+            selectors.get(Role.EXCLUDE).clear();
+            exclusions.getItems().setAll(profile.excludedSelectors());
             status.setText("Loaded profile: " + file.getName());
         } catch (Exception ex) {
             report("Could not load the profile", ex);
