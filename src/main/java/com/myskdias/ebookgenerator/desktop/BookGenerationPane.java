@@ -3,7 +3,7 @@ package com.myskdias.ebookgenerator.desktop;
 import com.myskdias.ebookgenerator.BookGenerationService;
 import com.myskdias.ebookgenerator.parser.BookImporter;
 import com.myskdias.ebookgenerator.parser.ParserProfile;
-import com.myskdias.ebookgenerator.parser.ParserProfileStore;
+import com.myskdias.ebookgenerator.download.DownloadArchive;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,6 +53,10 @@ final class BookGenerationPane extends ScrollPane {
     private final ProgressBar progress = new ProgressBar(0);
     private final BooleanProperty busy = new SimpleBooleanProperty(false);
     private ParserProfile profile;
+    private Path archive;
+    private Runnable editProfile = () -> {};
+    private java.util.function.Consumer<Path> openArchive = path -> {};
+    private java.util.function.Consumer<Path> existingHtml = this::useFirstChapter;
     private AtomicBoolean cancellation;
     private Thread worker;
 
@@ -67,20 +71,22 @@ final class BookGenerationPane extends ScrollPane {
         VBox panel = new VBox(12);
         panel.setPadding(new Insets(24));
         panel.setMaxWidth(900);
-        Label heading = new Label("Generate an EPUB");
+        Label heading = new Label("3. Generate the EPUB");
         heading.setStyle("-fx-font-size: 24px; -fx-font-weight: bold;");
-        Label explanation = new Label("Start with one local HTML file or a web URL. The profile extracts each chapter "
-            + "and follows its next-chapter link, applying the same exclusions throughout. "
-            + "For local files, following chapters must already be saved in the same folder or its subfolders.");
+        Label explanation = new Label("Use the saved chapters from step 1 and the extraction profile from step 2. "
+            + "This step works offline and never downloads chapters. Saved downloads keep their recorded order.");
         explanation.setWrapText(true);
         firstChapter.setId("generation-first-chapter");
-        firstChapter.setPromptText("Path to the first HTML file, or https://...");
-        Button chooseHtml = new Button("Choose HTML...");
+        firstChapter.setPromptText("Downloaded book or existing local HTML");
+        firstChapter.setEditable(false);
+        Button chooseHtml = new Button("Existing HTML...");
         chooseHtml.setOnAction(e -> chooseHtml());
         profileName.setEditable(false);
         profileName.setPromptText("Choose a saved JSON profile");
-        Button chooseProfile = new Button("Choose profile...");
-        chooseProfile.setOnAction(e -> chooseProfile());
+        Button chooseProfile = new Button("Load or edit profile...");
+        chooseProfile.setOnAction(e -> editProfile.run());
+        Button chooseBook = new Button("Open downloaded book...");
+        chooseBook.setOnAction(e -> chooseArchive());
         scope.getItems().addAll(Scope.ALL, Scope.COUNT);
         scope.setValue(Scope.ALL);
         scope.setId("generation-scope");
@@ -91,7 +97,7 @@ final class BookGenerationPane extends ScrollPane {
         author.setPromptText("Detected from the page, or Unknown if empty");
         language.setPromptText("Detected from the page, or en if empty");
         VBox form = new VBox(10,
-            new Label("First chapter (local file or web address)"), row(firstChapter, chooseHtml),
+            new Label("Saved chapters"), row(firstChapter, chooseBook), chooseHtml,
             new Label("Parser profile"), row(profileName, chooseProfile),
             new Label("Chapters to include"), new HBox(12, scope, count),
             new Label("The count includes the selected first chapter."),
@@ -127,7 +133,35 @@ final class BookGenerationPane extends ScrollPane {
         profileName.setText(profile.name() + " — " + description);
     }
 
-    void useFirstChapter(Path path) { firstChapter.setText(path.toAbsolutePath().toString()); }
+    void clearProfile() { profile = null; profileName.clear(); }
+
+    void useFirstChapter(Path path) {
+        archive = null;
+        firstChapter.setText(path.toAbsolutePath().toString());
+    }
+
+    void useArchive(Path manifest) throws java.io.IOException {
+        var saved = DownloadArchive.load(manifest);
+        if (saved.pages().isEmpty()) throw new java.io.IOException("No saved chapters in this download");
+        saved.pageFile(manifest, saved.pages().getFirst());
+        archive = manifest.toAbsolutePath();
+        firstChapter.setText(saved.pages().size() + " saved chapter(s) — " + archive.getParent());
+        status.setText("Saved download: " + saved.pages().size() + " chapter(s). "
+            + (saved.state() == DownloadArchive.State.COMPLETE ? "" : "This download is incomplete; only saved pages will be used. ")
+            + saved.message());
+    }
+
+    void onEditProfile(Runnable action) { editProfile = action; }
+    void onOpenArchive(java.util.function.Consumer<Path> action) { openArchive = action; }
+    void onExistingHtml(java.util.function.Consumer<Path> action) { existingHtml = action; }
+
+    private void chooseArchive() {
+        var file = chooser("Open a downloaded book", DirectoryHistory.Kind.DOWNLOAD,
+            "Downloaded book (" + DownloadArchive.FILE_NAME + ")", "*.json").showOpenDialog(getScene().getWindow());
+        if (file == null) return;
+        directories.remember(DirectoryHistory.Kind.DOWNLOAD, file.toPath());
+        openArchive.accept(file.toPath());
+    }
 
     private FileChooser chooser(String title, DirectoryHistory.Kind kind, String description, String... extensions) {
         FileChooser chooser = new FileChooser();
@@ -142,16 +176,7 @@ final class BookGenerationPane extends ScrollPane {
             "HTML files", "*.html", "*.htm", "*.xhtml").showOpenDialog(getScene().getWindow());
         if (file == null) return;
         directories.remember(DirectoryHistory.Kind.HTML, file.toPath());
-        useFirstChapter(file.toPath());
-    }
-
-    private void chooseProfile() {
-        var file = chooser("Choose a parser profile", DirectoryHistory.Kind.PROFILE,
-            "JSON profiles", "*.json").showOpenDialog(getScene().getWindow());
-        if (file == null) return;
-        directories.remember(DirectoryHistory.Kind.PROFILE, file.toPath());
-        try { useProfile(new ParserProfileStore().load(file.toPath()), file.getName()); }
-        catch (Exception ex) { status.setText("Could not load the profile: " + ex.getMessage()); }
+        existingHtml.accept(file.toPath());
     }
 
     private void chooseOutputAndGenerate() {
@@ -170,11 +195,18 @@ final class BookGenerationPane extends ScrollPane {
 
     private BookGenerationService.Request request(Path output) {
         if (profile == null) throw new IllegalArgumentException("Choose a parser profile first.");
+        int limit = selectedCount();
+        if (archive != null) {
+            try { return BookGenerationService.Request.fromArchive(archive, profile, limit,
+                bookTitle.getText(), author.getText(), language.getText(), output); }
+            catch (java.io.IOException ex) { throw new IllegalArgumentException(ex.getMessage(), ex); }
+        }
         String source = firstChapter.getText().strip();
-        if (source.isEmpty()) throw new IllegalArgumentException("Choose the first HTML chapter or enter its web URL.");
+        if (source.isEmpty()) throw new IllegalArgumentException("Select saved chapters from step 1.");
         URI uri;
         try {
-            if (source.matches("(?is)^https?://.*") || source.startsWith("file:")) uri = URI.create(source);
+            if (source.matches("(?is)^https?://.*")) throw new IllegalArgumentException("Download this URL in step 1 first");
+            if (source.startsWith("file:")) uri = URI.create(source);
             else uri = Path.of(source).toAbsolutePath().normalize().toUri();
             if ("file".equalsIgnoreCase(uri.getScheme()) && !Files.isRegularFile(Path.of(uri))) {
                 throw new IllegalArgumentException("First chapter file not found: " + source);
@@ -182,6 +214,11 @@ final class BookGenerationPane extends ScrollPane {
         } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException("Invalid first chapter: " + ex.getMessage(), ex);
         }
+        return new BookGenerationService.Request(uri, profile, limit,
+            bookTitle.getText(), author.getText(), language.getText(), output);
+    }
+
+    private int selectedCount() {
         int limit = 0;
         if (scope.getValue() == Scope.COUNT) {
             try { limit = Integer.parseInt(count.getEditor().getText().strip()); }
@@ -190,8 +227,7 @@ final class BookGenerationPane extends ScrollPane {
                 throw new IllegalArgumentException("Choose 1 to " + BookImporter.MAX_CHAPTERS + " chapters.");
             }
         }
-        return new BookGenerationService.Request(uri, profile, limit,
-            bookTitle.getText(), author.getText(), language.getText(), output);
+        return limit;
     }
 
     Task<BookGenerationService.Result> startGeneration(Path destination) {
@@ -218,6 +254,7 @@ final class BookGenerationPane extends ScrollPane {
             progress.setProgress(1);
             status.setText("EPUB generated: " + result.chapters() + " chapter(s). "
                 + (result.stop() == BookImporter.Stop.CHAPTER_LIMIT ? "Requested count reached."
+                    : result.stop() == BookImporter.Stop.SAVED_FILES ? "All selected saved chapters were converted."
                     : "No next-chapter link found after the last imported chapter."));
             output.setText(result.output().toString());
         });

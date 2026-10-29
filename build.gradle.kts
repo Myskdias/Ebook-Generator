@@ -70,7 +70,7 @@ tasks.register<JavaExec>("epubcheckSample") {
 
 tasks.register<JavaExec>("parserEditor") {
     group = "application"
-    description = "Open the desktop app (EPUB generation and visual parser profiles)."
+    description = "Open the desktop app (download chapters, choose a profile, generate EPUB)."
     dependsOn(tasks.classes)
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("com.myskdias.ebookgenerator.desktop.VisualParserLauncher")

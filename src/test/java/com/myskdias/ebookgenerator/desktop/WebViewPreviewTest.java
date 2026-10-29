@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myskdias.ebookgenerator.BookGenerationService;
 import com.myskdias.ebookgenerator.parser.ParserProfile;
+import com.myskdias.ebookgenerator.parser.BookImporter;
+import com.myskdias.ebookgenerator.download.ChapterDownloadService;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
@@ -23,6 +25,7 @@ import javafx.scene.control.TabPane;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.Label;
+import javafx.scene.control.Button;
 import javafx.scene.Scene;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
@@ -35,6 +38,7 @@ import org.junit.jupiter.api.io.TempDir;
 /** Exercises the actual JavaFX string-to-WebKit boundary, not just Jsoup round trips. */
 class WebViewPreviewTest {
     @TempDir Path temp;
+    private static final java.util.List<WebView> retainedViews = new java.util.ArrayList<>();
     @BeforeAll static void startToolkit() throws Exception {
         var started = new CompletableFuture<Void>();
         Platform.startup(() -> {
@@ -42,6 +46,14 @@ class WebViewPreviewTest {
             started.complete(null);
         });
         started.get(20, TimeUnit.SECONDS);
+    }
+
+    @org.junit.jupiter.api.AfterEach void releasePreviewViews() throws Exception {
+        onFx(() -> {
+            retainedViews.forEach(view -> view.getEngine().load(null));
+            retainedViews.clear();
+            return null;
+        });
     }
 
     private static <T> T onFx(Callable<T> operation) throws Exception {
@@ -60,7 +72,9 @@ class WebViewPreviewTest {
     private static WebEngine load(String html, boolean css, java.util.Map<String, String> linkedCss) throws Exception {
         var loaded = new CompletableFuture<WebEngine>();
         onFx(() -> {
-            var engine = new WebView().getEngine();
+            var view = new WebView();
+            retainedViews.add(view); // Keep the owner alive until the asynchronous WebKit load finishes.
+            var engine = view.getEngine();
             engine.getLoadWorker().stateProperty().addListener((o, old, state) -> {
                 if (state == Worker.State.SUCCEEDED) loaded.complete(engine);
                 if (state == Worker.State.FAILED) loaded.completeExceptionally(
@@ -72,11 +86,68 @@ class WebViewPreviewTest {
         return loaded.get(20, TimeUnit.SECONDS);
     }
 
-    private static CompletableFuture<BookGenerationService.Result> completion(Task<BookGenerationService.Result> task) {
-        var completed = new CompletableFuture<BookGenerationService.Result>();
+    private static <T> CompletableFuture<T> completion(Task<T> task) {
+        var completed = new CompletableFuture<T>();
         task.addEventHandler(WorkerStateEvent.WORKER_STATE_SUCCEEDED, e -> completed.complete(task.getValue()));
         task.addEventHandler(WorkerStateEvent.WORKER_STATE_FAILED, e -> completed.completeExceptionally(task.getException()));
         return completed;
+    }
+
+    @Test void desktopDownloadsThenCreatesAProfileThenGeneratesOffline() throws Exception {
+        var calls = new AtomicInteger();
+        var downloader = new ChapterDownloadService((uri, domain) -> {
+            int number = calls.incrementAndGet();
+            return new BookImporter.Page(uri, "<h1>Chapter " + number + "</h1><main><p>Café 😀 " + number
+                + "</p><div class='ads'><p>Advertisement</p></div></main>"
+                + (number == 1 ? "<a data-nav='next' href='/2'>Next</a>" : ""));
+        }, 0);
+        var app = new VisualParserApp(new DirectoryHistory(null), downloader);
+        Stage stage = onFx(() -> { var window = new Stage(); app.start(window); return window; });
+        try {
+            var downloaded = onFx(() -> {
+                var tabs = (TabPane) stage.getScene().lookup("#workspace-tabs");
+                assertEquals(0, tabs.getSelectionModel().getSelectedIndex());
+                ((TextField) stage.getScene().lookup("#download-first-url")).setText("https://example.com/1");
+                ((TextField) stage.getScene().lookup("#download-folder")).setText(temp.resolve("download").toString());
+                return completion(((ChapterDownloadPane) tabs.getTabs().getFirst().getContent()).startDownload());
+            });
+            var saved = downloaded.get(20, TimeUnit.SECONDS);
+            assertEquals(2, saved.archive().pages().size());
+            assertFalse(Files.exists(temp.resolve("book.epub")));
+            var ready = new CompletableFuture<Void>();
+            onFx(() -> {
+                var tabs = (TabPane) stage.getScene().lookup("#workspace-tabs");
+                var browser = (WebView) tabs.getTabs().get(1).getContent().lookup("WebView");
+                browser.getEngine().getLoadWorker().stateProperty().addListener((o, old, state) -> {
+                    if (state == Worker.State.SUCCEEDED) ready.complete(null);
+                    if (state == Worker.State.FAILED) ready.completeExceptionally(browser.getEngine().getLoadWorker().getException());
+                });
+                ((Button) stage.getScene().lookup("#download-to-profile")).fire();
+                assertEquals(1, tabs.getSelectionModel().getSelectedIndex());
+                return null;
+            });
+            ready.get(20, TimeUnit.SECONDS);
+            var generated = onFx(() -> {
+                // Create the extraction profile only now. Saved downloads do not need its next selector.
+                ((TextField) stage.getScene().lookup("#selector-title")).setText("h1");
+                ((TextField) stage.getScene().lookup("#selector-content")).setText("main");
+                assertTrue(((TextField) stage.getScene().lookup("#selector-next")).getText().isEmpty());
+                ((TextField) stage.getScene().lookup("#selector-exclude")).setText(".ads");
+                ((Button) stage.getScene().lookup("#add-exclusion")).fire();
+                ((Button) stage.getScene().lookup("#profile-to-epub")).fire();
+                var tabs = (TabPane) stage.getScene().lookup("#workspace-tabs");
+                assertEquals(2, tabs.getSelectionModel().getSelectedIndex());
+                return completion(((BookGenerationPane) tabs.getTabs().get(2).getContent()).startGeneration(temp.resolve("book.epub")));
+            });
+            assertEquals(2, generated.get(20, TimeUnit.SECONDS).chapters());
+            assertEquals(2, calls.get());
+            try (var zip = new java.util.zip.ZipFile(temp.resolve("book.epub").toFile())) {
+                String chapter = new String(zip.getInputStream(zip.getEntry("OEBPS/chapter-0001.xhtml")).readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+                assertTrue(chapter.contains("Café 😀"));
+                assertFalse(chapter.contains("Advertisement"));
+            }
+        } finally { onFx(() -> { app.stop(); stage.close(); return null; }); }
     }
 
     @SuppressWarnings("unchecked")
@@ -90,7 +161,8 @@ class WebViewPreviewTest {
         try {
             var limited = onFx(() -> {
                 var tabs = (TabPane) stage.getScene().lookup("#workspace-tabs");
-                assertEquals("Generate EPUB", tabs.getSelectionModel().getSelectedItem().getText());
+                assertEquals("1. Download", tabs.getSelectionModel().getSelectedItem().getText());
+                tabs.getSelectionModel().select(2);
                 var pane = (BookGenerationPane) tabs.getSelectionModel().getSelectedItem().getContent();
                 pane.useProfile(new ParserProfile("Site", "example.com", "h1", "main", ".next"), "Test");
                 pane.useFirstChapter(temp.resolve("1.html"));

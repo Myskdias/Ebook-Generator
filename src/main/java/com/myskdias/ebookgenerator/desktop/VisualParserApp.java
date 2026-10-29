@@ -7,6 +7,7 @@ import com.myskdias.ebookgenerator.parser.ParsedChapter;
 import com.myskdias.ebookgenerator.parser.ParserProfile;
 import com.myskdias.ebookgenerator.parser.ParserProfileStore;
 import com.myskdias.ebookgenerator.parser.ProfiledHtmlParser;
+import com.myskdias.ebookgenerator.download.DownloadArchive;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -66,6 +67,7 @@ public final class VisualParserApp extends Application {
     private final ObjectMapper json = new ObjectMapper();
     private final Map<Role, TextField> selectors = new EnumMap<>(Role.class);
     private final DirectoryHistory directoryHistory;
+    private final com.myskdias.ebookgenerator.download.ChapterDownloadService downloadService;
 
     private WebView browser;
     private TextField profileName;
@@ -96,13 +98,21 @@ public final class VisualParserApp extends Application {
     private Button parentButton;
     private BookGenerationPane generationPane;
     private TabPane workspaceTabs;
+    private ChapterDownloadPane downloadPane;
+    private Path activeArchive;
 
     public VisualParserApp() {
         this(DirectoryHistory.forUser());
     }
 
     VisualParserApp(DirectoryHistory directoryHistory) {
+        this(directoryHistory, new com.myskdias.ebookgenerator.download.ChapterDownloadService());
+    }
+
+    VisualParserApp(DirectoryHistory directoryHistory,
+                    com.myskdias.ebookgenerator.download.ChapterDownloadService downloadService) {
         this.directoryHistory = directoryHistory;
+        this.downloadService = downloadService;
     }
 
     @Override
@@ -138,6 +148,8 @@ public final class VisualParserApp extends Application {
         roles = new ToggleGroup();
         profileName.setPromptText("Profile name (e.g. NovelFull)");
         domainName.setPromptText("Domain (e.g. example.com)");
+        profileName.textProperty().addListener((o, before, after) -> profileChanged());
+        domainName.textProperty().addListener((o, before, after) -> profileChanged());
         preview.setEditable(false);
         preview.setWrapText(true);
         preview.setPrefRowCount(12);
@@ -195,7 +207,26 @@ public final class VisualParserApp extends Application {
         selectionPoller.play();
 
         generationPane = new BookGenerationPane(directoryHistory);
-        workspaceTabs = new TabPane(new Tab("Generate EPUB", generationPane), new Tab("Profile editor", layout));
+        downloadPane = new ChapterDownloadPane(directoryHistory, path -> {
+            try { openDownloadedBook(path); }
+            catch (Exception ex) { report("Could not open downloaded book", ex); }
+        }, downloadService);
+        workspaceTabs = new TabPane(new Tab("1. Download", downloadPane), new Tab("2. Profile", layout),
+            new Tab("3. EPUB", generationPane));
+        generationPane.onEditProfile(() -> workspaceTabs.getSelectionModel().select(1));
+        java.util.function.Consumer<Path> useExisting = path -> {
+            try {
+                loadHtml(path);
+                generationPane.useFirstChapter(path);
+                workspaceTabs.getSelectionModel().select(1);
+            } catch (Exception ex) { report("Could not open HTML", ex); }
+        };
+        downloadPane.onExistingHtml(useExisting);
+        generationPane.onExistingHtml(useExisting);
+        generationPane.onOpenArchive(path -> {
+            try { openDownloadedBook(path); }
+            catch (Exception ex) { report("Could not open downloaded book", ex); }
+        });
         workspaceTabs.setId("workspace-tabs");
         workspaceTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         primaryStage.setTitle("Ebook Generator");
@@ -210,7 +241,7 @@ public final class VisualParserApp extends Application {
         panel.setPadding(new Insets(12));
         panel.setPrefWidth(390);
 
-        Label heading = new Label("Parser profile");
+        Label heading = new Label("2. Load or create a profile");
         heading.setStyle("-fx-font-size: 19px; -fx-font-weight: bold;");
         panel.getChildren().addAll(heading, new Label("Profile name"), profileName,
             new Label("Website domain"), domainName, encodingInfo,
@@ -234,13 +265,14 @@ public final class VisualParserApp extends Application {
         panel.getChildren().add(parentButton);
 
         Button addExclusion = new Button("Add exclusion");
+        addExclusion.setId("add-exclusion");
         addExclusion.setOnAction(e -> addExclusion());
         Button removeExclusion = new Button("Remove selected");
         removeExclusion.setOnAction(e -> {
             int index = exclusions.getSelectionModel().getSelectedIndex();
             if (index >= 0) exclusions.getItems().remove(index);
         });
-        exclusions.getItems().addListener((javafx.collections.ListChangeListener<String>) c -> syncExclusions());
+        exclusions.getItems().addListener((javafx.collections.ListChangeListener<String>) c -> { syncExclusions(); profileChanged(); });
         panel.getChildren().addAll(new HBox(8, addExclusion, removeExclusion), exclusions);
 
         Label explanation = new Label(
@@ -260,13 +292,17 @@ public final class VisualParserApp extends Application {
         Button save = new Button("Save JSON profile...");
         save.setMaxWidth(Double.MAX_VALUE);
         save.setOnAction(e -> saveProfile());
-        Button generate = new Button("Generate EPUB from this chapter...");
+        Button generate = new Button("3. Use this profile for the EPUB");
+        generate.setId("profile-to-epub");
         generate.setOnAction(e -> {
             if (sourcePath == null) { status.setText("Open a local HTML chapter first."); return; }
             try {
-                generationPane.useProfile(buildProfile(true), "Current editor profile");
-                generationPane.useFirstChapter(sourcePath);
-                workspaceTabs.getSelectionModel().select(0);
+                var selected = buildProfile(true);
+                parser.parse(sourceHtml, sourcePath.toUri(), selected);
+                generationPane.useProfile(selected, "Current editor profile");
+                if (activeArchive == null) generationPane.useFirstChapter(sourcePath);
+                else generationPane.useArchive(activeArchive);
+                workspaceTabs.getSelectionModel().select(2);
             } catch (Exception ex) { status.setText(ex.getMessage()); }
         });
         panel.getChildren().addAll(inspect, save, generate, new Label("Extracted chapter"), preview);
@@ -296,6 +332,7 @@ public final class VisualParserApp extends Application {
         input.setId("selector-" + role.name().toLowerCase(java.util.Locale.ROOT));
         input.setPromptText(prompt);
         selectors.put(role, input);
+        if (role != Role.EXCLUDE) input.textProperty().addListener((o, before, after) -> profileChanged());
         panel.getChildren().addAll(choice, input);
     }
 
@@ -324,7 +361,12 @@ public final class VisualParserApp extends Application {
     }
 
     void loadHtml(Path path) throws IOException {
+        activeArchive = null;
         HtmlSource source = HtmlSource.read(path);
+        if (generationPane != null) {
+            generationPane.useFirstChapter(path);
+            generationPane.clearProfile();
+        }
         sourcePath = path;
         sourceHtml = source.html();
         cssCache = null;
@@ -342,6 +384,21 @@ public final class VisualParserApp extends Application {
         openedFile.setText(filename);
         preview.clear();
         reloadPreview();
+    }
+
+    void openDownloadedBook(Path manifest) throws IOException {
+        var archive = DownloadArchive.load(manifest);
+        if (archive.pages().isEmpty()) throw new IOException("This download has no saved chapters yet");
+        loadHtml(archive.pageFile(manifest, archive.pages().getFirst()));
+        activeArchive = manifest.toAbsolutePath();
+        generationPane.useArchive(activeArchive);
+        generationPane.clearProfile();
+        workspaceTabs.getSelectionModel().select(1);
+        status.setText(archive.pages().size() + " saved chapter(s). Load an existing profile or select the content to create one.");
+    }
+
+    private void profileChanged() {
+        if (generationPane != null) generationPane.clearProfile();
     }
 
     private void reloadPreview() {
@@ -566,18 +623,21 @@ public final class VisualParserApp extends Application {
         if (file == null) return;
         directoryHistory.remember(DirectoryHistory.Kind.PROFILE, file.toPath());
         try {
-            ParserProfile profile = store.load(file.toPath());
-            profileName.setText(profile.name());
-            domainName.setText(profile.domain());
-            selectors.get(Role.TITLE).setText(profile.titleSelector());
-            selectors.get(Role.CONTENT).setText(profile.contentSelector());
-            selectors.get(Role.NEXT).setText(profile.nextChapterSelector());
-            selectors.get(Role.EXCLUDE).clear();
-            exclusions.getItems().setAll(profile.excludedSelectors());
+            applyProfile(store.load(file.toPath()));
             status.setText("Loaded profile: " + file.getName());
         } catch (Exception ex) {
             report("Could not load the profile", ex);
         }
+    }
+
+    void applyProfile(ParserProfile profile) {
+        profileName.setText(profile.name());
+        domainName.setText(profile.domain());
+        selectors.get(Role.TITLE).setText(profile.titleSelector());
+        selectors.get(Role.CONTENT).setText(profile.contentSelector());
+        selectors.get(Role.NEXT).setText(profile.nextChapterSelector());
+        selectors.get(Role.EXCLUDE).clear();
+        exclusions.getItems().setAll(profile.excludedSelectors());
     }
 
     private void report(String message, Throwable error) {
@@ -595,5 +655,6 @@ public final class VisualParserApp extends Application {
         if (selectionPoller != null) selectionPoller.stop();
         if (cssTask != null) cssTask.cancel(true);
         if (generationPane != null) generationPane.cancelGeneration();
+        if (downloadPane != null) downloadPane.cancelDownload();
     }
 }

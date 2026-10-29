@@ -75,8 +75,8 @@ public final class HttpPageFetcher implements AutoCloseable {
     public static void requireSite(URI uri, String domain) throws IOException {
         String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
         if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-            || uri.getUserInfo() != null || !(host.equals(domain) || host.endsWith("." + domain))) {
-            throw new IOException("Chapter URL must belong to the profile's domain (" + domain + "): " + uri);
+            || host.isEmpty() || uri.getUserInfo() != null || !(host.equals(domain) || host.endsWith("." + domain))) {
+            throw new IOException("Chapter URL must stay on the source domain (" + domain + "): " + uri);
         }
     }
 

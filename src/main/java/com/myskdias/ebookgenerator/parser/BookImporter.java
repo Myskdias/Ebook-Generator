@@ -20,7 +20,7 @@ import org.jsoup.nodes.Document;
 /** Follows only the profile's next link, preserving chapter order and avoiding partial success on errors. */
 public final class BookImporter {
     public static final int MAX_CHAPTERS = 10_000;
-    public enum Stop { NO_NEXT_LINK, CHAPTER_LIMIT }
+    public enum Stop { NO_NEXT_LINK, CHAPTER_LIMIT, SAVED_FILES }
     public record Page(URI uri, String html) { }
     public record Progress(int chapters, String title, URI source) { }
     public record Result(List<Chapter> chapters, Stop stop, String title, String author, String language) {
@@ -37,6 +37,37 @@ public final class BookImporter {
     BookImporter(WebReader webReader, long delayMillis) {
         this.webReader = webReader;
         this.delayMillis = delayMillis;
+    }
+
+    /** Convert an explicit saved-page order, without consulting navigation or using the network. */
+    public Result readFiles(List<Path> files, ParserProfile profile, int maxChapters,
+                            Consumer<Progress> progress, BooleanSupplier cancelled) throws IOException {
+        if (files.isEmpty()) throw new IOException("No downloaded chapters were selected");
+        int count = maxChapters == 0 ? files.size() : Math.min(maxChapters, files.size());
+        var chapters = new ArrayList<Chapter>();
+        String title = "", author = "", language = "en";
+        for (int i = 0; i < count; i++) {
+            checkCancelled(cancelled);
+            Path file = files.get(i);
+            try {
+                String html = HtmlSource.read(file).html();
+                var chapter = new ProfiledHtmlParser().parse(html, file.toUri(), profile).chapter();
+                chapters.add(chapter);
+                if (i == 0) {
+                    var doc = Jsoup.parse(html);
+                    title = metadata(doc, "og:novel:book_name");
+                    if (title.isBlank()) title = chapter.title();
+                    author = metadata(doc, "og:novel:author");
+                    String lang = doc.selectFirst("html").attr("lang");
+                    if (lang.matches("[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*")) language = lang;
+                }
+                progress.accept(new Progress(i + 1, chapter.title(), file.toUri()));
+            } catch (IOException | IllegalArgumentException ex) {
+                throw new IOException("Saved chapter " + (i + 1) + " at " + file + ": " + ex.getMessage(), ex);
+            }
+        }
+        checkCancelled(cancelled);
+        return new Result(chapters, count < files.size() ? Stop.CHAPTER_LIMIT : Stop.SAVED_FILES, title, author, language);
     }
 
     /** maxChapters == 0 follows the chain until no next link is found. The first chapter is included. */
@@ -61,7 +92,7 @@ public final class BookImporter {
             try {
                 if (local) {
                     if (!"file".equalsIgnoreCase(current.getScheme()) || current.getRawAuthority() != null) {
-                        throw new IOException("A local chapter points to a website. Start from its web URL to download chapters");
+                        throw new IOException("A local chapter points to a website. Download the chapters in step 1 first");
                     }
                     Path file = Path.of(current).toRealPath();
                     if (!file.startsWith(root) || !Files.isRegularFile(file)) {

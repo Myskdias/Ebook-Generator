@@ -47,7 +47,7 @@ final class LinkedCssLoader {
 
     static Optional<URI> originalPage(String html) {
         var doc = Jsoup.parse(html);
-        for (var node : doc.select("link[rel=canonical][href], meta[property=og:url][content]")) {
+        for (var node : doc.select("meta[name=ebook-generator-source-url][content], link[rel=canonical][href], meta[property=og:url][content]")) {
             String value = node.hasAttr("href") ? node.attr("href") : node.attr("content");
             try { if (webUri(URI.create(value))) return Optional.of(URI.create(value)); }
             catch (IllegalArgumentException ignored) { }
@@ -102,7 +102,7 @@ final class LinkedCssLoader {
 
     private static String localCss(Path source, URI ref) throws IOException {
         // Only relative .css files inside the selected HTML directory, including saved-page folders.
-        if (ref.isAbsolute() || ref.getRawAuthority() != null || ref.getPath() == null
+        if (source == null || ref.isAbsolute() || ref.getRawAuthority() != null || ref.getPath() == null
             || ref.getPath().startsWith("/") || !ref.getPath().toLowerCase(Locale.ROOT).endsWith(".css")) return null;
         Path root = source.toAbsolutePath().getParent().toRealPath();
         Path candidate = root.resolve(ref.getPath()).normalize();

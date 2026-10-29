@@ -9,47 +9,59 @@ ongoing development happens on `main`.
 - JDK 25 (LTS) for this development version.
 - The included Gradle Wrapper handles Gradle installation.
 
-## Generate a book from its first chapter
+## Download, choose a profile, then generate
 
-Launch the desktop app with `./gradlew parserEditor` on Linux/macOS or
-`.\gradlew.bat parserEditor` on Windows. **Generate EPUB** is the first tab.
+Launch with `./gradlew parserEditor` on Linux/macOS or `.\gradlew.bat parserEditor`
+on Windows. The desktop app has three separate tabs:
 
-1. Choose the **first HTML chapter**, or paste its HTTP(S) **web URL**.
-2. Choose the saved **JSON parser profile** for that version of the site.
-3. Choose **All chapters from the first chapter** or **A number of chapters**.
-   The count includes the selected chapter: choosing 10 imports it and 9 successors.
-4. Optionally fill in the book title, author and language. Otherwise they are detected
-   from the first page where possible, with its chapter title, `Unknown` and `en` as fallbacks.
-5. Click **Generate EPUB...**, choose the destination, and follow progress. **Cancel**
-   stops reading and writing without publishing a partial EPUB.
+1. **Download.** Enter the first chapter URL, choose an empty folder and select all
+   following chapters or a count (including the starting chapter). No extraction
+   profile is needed. Next links are detected from standard navigation attributes
+   and labels; an optional next-link selector can resolve unusual or ambiguous sites.
+   Click **Download / resume**. Each HTML page is saved immediately, before extraction.
+2. **Profile.** Click **Profile the saved chapters** to preview the first saved page.
+   Load a JSON profile or create one visually for the title, content and exclusions.
+   Check the extraction, then click **Use this profile for the EPUB**. A next-chapter
+   selector in the extraction profile is not required for this saved download.
+3. **EPUB.** Generate from all saved chapters or a selected count, optionally setting
+   title, author and language. This step reads local files in the recorded download
+   order and has no chapter downloader. The profile can be changed and another EPUB
+   generated without downloading anything again.
 
-The profile's next-chapter selector determines the order; filenames are never sorted
-or guessed. Local chapters must already exist in the first file's folder or subfolders.
-Missing files stop the job with the failing chapter and path. Local mode does not
-silently switch to downloading if a link points to a website: start from a web URL
-to download the sequence instead. The EPUB output folder is remembered separately.
+The download folder contains `chapters/000001.html`, etc., plus
+`chapter-download.json`, which records source URLs, order and completion status.
+Keep this file with its `chapters` folder. **Open downloaded book...** reopens it
+after restarting the app. To extend a numbered download or retry after cancellation
+or a failed request, reopen the same folder and click **Download / resume**; already
+saved pages are checked and reused. Downloads never overwrite unrelated HTML files.
 
-Online mode fetches only the HTML pages, without executing JavaScript or downloading
-scripts, images, ads or fonts. It waits one second between chapters and restricts URLs
-and redirects to the profile's domain or its subdomains. HTTP errors, invalid text,
-unsupported links, cycles and duplicate chapters stop the job. A page is limited to
-4 MiB and a book to 10,000 chapters. Sites that require login, browser scripts or a
-challenge page need a separate browser-based downloader; this app does not bypass them.
+The saved HTML retains the page content, including advertising, so exclusions can
+be decided later. It is serialized as UTF-8 with matching charset metadata and its
+original source URL for CSS preview resolution. The saved pages are checked for
+missing or changed files before conversion. Re-downloading and extraction are
+independent operations; cancelling EPUB generation keeps the source pages intact.
 
-**All chapters** stops when the profile finds no usable next link. The completion
-message reports that reason and the exact chapter count, so check the profile if
-you expected more chapters. A numbered import may also end sooner if the chain ends.
-The destination is written only after the sequence imports successfully; an existing
-EPUB is left intact on an import error or cancellation.
+**Use existing HTML files...** in the first tab also supports chapters downloaded
+with another tool. Select the first local HTML file, then load/create a profile.
+For this older local-file workflow, its next selector follows links within that
+file's folder or subfolders. It does not switch to downloading online links.
 
-For the current online NovelFull layout, an example profile is included at
-[`examples/profiles/novelfull-web.json`](examples/profiles/novelfull-web.json).
-It was checked against two live chapters. The live markup differs from older HTTrack
-archives, so use your existing archive profile for those downloaded files.
+The downloader fetches HTML only, without running scripts or loading subresources.
+It waits one second between pages, stays on the source domain or its subdomains,
+and limits a page to 4 MiB and a book to 10,000 chapters. HTTP errors and cycles stop
+the download while keeping saved pages. **All chapters** ends when no next link is
+found; check the reported count and set a custom navigation selector if more pages
+were expected. Incomplete downloads are labelled when reopened for conversion.
+Login, browser-script and challenge pages need a separate browser-based downloader.
+
+For saved pages from the current NovelFull layout, an example extraction profile is
+included at [`examples/profiles/novelfull-web.json`](examples/profiles/novelfull-web.json).
+The full staged workflow was checked with two live chapters. Older HTTrack archives
+can use their existing extraction profiles.
 
 ## Visual parser editor
 
-The **Profile editor** tab can open an **existing local HTML file**.
+The **2. Profile** tab can open an **existing local HTML file**.
 It shows a sanitized WebView preview. Choose each field on the right, click its
 corresponding element in the preview, and use **Select parent element** when a click
 selects only a child node. The editor produces a persistent JSON parser profile.
@@ -73,10 +85,10 @@ On Windows:
 5. Enter a **profile name** and **website domain** (e.g. `example.com`).
 6. Use **Preview extraction** to test the selectors against the source HTML.
 7. Save the JSON profile with **Save JSON profile...**.
-   **Generate EPUB from this chapter...** transfers the current chapter and profile
-   directly to the generation tab; saving the profile first is optional.
+   **Use this profile for the EPUB** applies it to the saved book and opens step 3;
+   saving the JSON first is optional.
 
-File dialogs remember the last HTML, profile and EPUB output folders separately,
+File dialogs remember the last HTML, profile, download and EPUB output folders separately,
 including after restarting the editor. Loading and saving profiles share the profile
 folder. The first dialog of a kind can reuse the most recently chosen folder;
 cancelling a dialog does not reset it. If a saved folder has been removed, the dialog
@@ -162,8 +174,8 @@ Save profiles through the visual editor, or edit the JSON manually. To use one:
 ./gradlew run --args='--title "My Novel" --author "An Author" --profile src/test/resources/profiles/article.json --output build/profiled.epub src/test/resources/chapters/chapter-01.html src/test/resources/chapters/chapter-02.html'
 ```
 
-The `domain` field is metadata for local files. Online imports require chapter URLs
-and redirects to stay on this domain or its subdomains.
+The `domain` field is metadata for local extraction profiles. Download navigation
+uses the source URL's domain and is configured independently of this profile.
 
 `excludedSelectors` is optional: existing profiles load with an empty exclusion
 list. Exclusions are validated and deduplicated when loading/saving, and apply in
@@ -200,7 +212,9 @@ class-wide exclusions across reordered chapters, and CSP resource blocking.
 Stylesheet loader tests cover local paths, original URL detection, link resolution,
 missing resources, filtering and loading limits. Book-generation tests cover local
 and HTTP chapter chains, counts, encoding, redirects, cycles, missing pages, cancellation,
-atomic output and both generation modes in the desktop form. HTTP tests use local
+atomic output and the three desktop stages. Download tests cover profile-independent
+navigation, saved order, resuming, source integrity and repeated offline extraction
+with different profiles. HTTP tests use local
 servers rather than depending on public sites. `epubcheckSample` runs EPUBCheck against a
 generated two-chapter EPUB. On a Linux machine without a display, use
 `xvfb-run -a ./gradlew test epubcheckSample` (requires Xvfb and JavaFX GTK libraries).

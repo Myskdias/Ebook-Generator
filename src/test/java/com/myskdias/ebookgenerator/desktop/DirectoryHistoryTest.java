@@ -20,11 +20,13 @@ class DirectoryHistoryTest {
         Path html = Files.createDirectory(temp.resolve("html"));
         Path profiles = Files.createDirectory(temp.resolve("profiles"));
         Path books = Files.createDirectory(temp.resolve("books"));
+        Path downloads = Files.createDirectory(temp.resolve("downloads"));
         history.remember(DirectoryHistory.Kind.HTML, html.resolve("chapter.html"));
         // The first profile dialog starts where HTML was last selected, until it has its own folder.
         assertEquals(html, history.initialDirectory(DirectoryHistory.Kind.PROFILE));
         history.remember(DirectoryHistory.Kind.PROFILE, profiles.resolve("site.json"));
         history.remember(DirectoryHistory.Kind.EPUB, books.resolve("book.epub"));
+        history.rememberDirectory(DirectoryHistory.Kind.DOWNLOAD, downloads);
         var reopened = new DirectoryHistory(preferences);
         var openHtml = new FileChooser();
         var loadOrSaveProfile = new FileChooser();
@@ -33,6 +35,7 @@ class DirectoryHistoryTest {
         assertEquals(html.toFile(), openHtml.getInitialDirectory());
         assertEquals(profiles.toFile(), loadOrSaveProfile.getInitialDirectory());
         assertEquals(books, reopened.initialDirectory(DirectoryHistory.Kind.EPUB));
+        assertEquals(downloads, reopened.initialDirectory(DirectoryHistory.Kind.DOWNLOAD));
         assertTrue(preferences.flushed);
     }
 

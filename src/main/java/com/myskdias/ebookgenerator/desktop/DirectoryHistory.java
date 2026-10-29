@@ -11,7 +11,7 @@ import javafx.stage.FileChooser;
 
 /** Remember chooser folders independently for HTML and profiles, including across restarts. */
 final class DirectoryHistory {
-    enum Kind { HTML, PROFILE, EPUB }
+    enum Kind { HTML, PROFILE, EPUB, DOWNLOAD }
     private static final String LAST = "lastDirectory";
     private final Preferences preferences;
     private final Map<String, String> session = new HashMap<>();
@@ -47,6 +47,11 @@ final class DirectoryHistory {
         if (selectedFile == null) return; // A cancelled dialog must not reset its folder.
         Path parent = selectedFile.toAbsolutePath().normalize().getParent();
         if (parent == null) return;
+        rememberDirectory(kind, parent);
+    }
+
+    void rememberDirectory(Kind kind, Path directory) {
+        Path parent = directory.toAbsolutePath().normalize();
         write(key(kind), parent.toString());
         write(LAST, parent.toString());
         if (preferences != null) {
@@ -62,6 +67,7 @@ final class DirectoryHistory {
             case HTML -> "htmlDirectory";
             case PROFILE -> "profileDirectory";
             case EPUB -> "epubDirectory";
+            case DOWNLOAD -> "downloadDirectory";
         };
     }
 

@@ -81,7 +81,7 @@ class BookImporterTest {
             .getMessage().contains("outside"));
         write("1.html", 1, "<a class='next' href='https://example.com/2'>Next</a>");
         assertTrue(assertThrows(IOException.class, () -> local.read(first.toUri(), profile, 0, p -> {}, () -> false))
-            .getMessage().contains("Start from its web URL"));
+            .getMessage().contains("Download the chapters in step 1"));
     }
 
     @Test void requiresNavigationForASequenceButSupportsASingleChapterProfile() throws Exception {
@@ -117,6 +117,6 @@ class BookImporterTest {
         var outside = new BookImporter((uri, domain) -> new BookImporter.Page(uri,
             html(1, "<a class='next' href='https://unrelated.example/2'>Next</a>")), 0);
         assertTrue(assertThrows(IOException.class, () -> outside.read(URI.create("https://example.com/1"),
-            profile, 0, p -> {}, () -> false)).getMessage().contains("profile's domain"));
+            profile, 0, p -> {}, () -> false)).getMessage().contains("source domain"));
     }
 }

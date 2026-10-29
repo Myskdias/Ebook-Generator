@@ -69,7 +69,7 @@ class HttpPageFetcherTest {
             assertTrue(assertThrows(IOException.class, () -> fetcher.fetch(base.resolve("/not-html"), "127.0.0.1"))
                 .getMessage().contains("HTML"));
             assertTrue(assertThrows(IOException.class, () -> fetcher.fetch(base.resolve("/outside"), "127.0.0.1"))
-                .getMessage().contains("profile's domain"));
+                .getMessage().contains("source domain"));
         }
         try (var production = new HttpPageFetcher()) {
             assertTrue(assertThrows(IOException.class, () -> production.fetch(base.resolve("/book/1"), "127.0.0.1"))
