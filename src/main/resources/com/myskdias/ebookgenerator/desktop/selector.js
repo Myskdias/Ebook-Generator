@@ -94,6 +94,7 @@
     highlight(element);
     pending = JSON.stringify({
       selector: selectorFor(element),
+      classSelector: element.getAttribute("data-ebook-class-selector") || "",
       tag: element.tagName.toLowerCase(),
       text: (element.innerText || element.textContent || "").trim().slice(0, 120)
     });

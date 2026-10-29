@@ -62,10 +62,41 @@ class HtmlPreviewSanitizerTest {
     @Test void rejectsObfuscatedResourceCssAndMarkupBreakouts() {
         String[] unsafe = {"background-image:u\\72l(https://remote)", "color:var(--remote)",
             "width:expression(alert(1))", "font-family:url(https://remote)",
-            "background: u/**/rl(x)", "color:red!important", "--x:url(x)"};
+            "background: u/**/rl(x)", "--x:url(x)"};
         for (String css : unsafe) assertEquals("", PreviewCss.declarations(css));
-        assertEquals("", PreviewCss.stylesheet("@import 'https://remote'; p {color:red}"));
+        assertEquals("p{color:red;}", PreviewCss.stylesheet("@import 'https://remote'; p {color:red}"));
         assertEquals("", PreviewCss.stylesheet("p</style><script>evil()</script> {color:red}"));
+    }
+
+    @Test void supportsCommentedStylesResponsiveRulesAndSafeImportantDeclarations() {
+        String css = "/* site.css */ @charset 'UTF-8'; @import url(https://remote);"
+            + "p { color: red !important; background: url(https://remote); width:calc(100% - 20px); }"
+            + "@media screen and (min-width: 600px) { .reader { float:left; max-width:750px; } }"
+            + "@font-face { font-family:foo; src:url(https://remote); }";
+        String safe = PreviewCss.stylesheet(css);
+        assertTrue(safe.contains("color:red!important"));
+        assertTrue(safe.contains("width:calc(100% - 20px)"));
+        assertTrue(safe.contains("@media screen and (min-width: 600px)"));
+        assertTrue(safe.contains("float:left"));
+        assertFalse(safe.contains("url("));
+        assertFalse(safe.contains("@import"));
+        assertFalse(safe.contains("@font-face"));
+    }
+
+    @Test void embedsFilteredLinkedStylesInCascadeOrderAndHonorsCssOff() {
+        String html = "<link rel='stylesheet' href='a.css'><style>p{color:blue}</style>"
+            + "<link rel='stylesheet' href='b.css' media='screen'><p>Text</p>"
+            + "<link rel='stylesheet' href='a.css' disabled><link rel='icon' href='a.css'>"
+            + "<link rel='alternate stylesheet' href='a.css'>";
+        var css = java.util.Map.of("a.css", "p{color:red;background:url(remote)}",
+            "b.css", "p{font-size:22px} p</style><script>evil()</script>{color:red}");
+        var document = Jsoup.parse(HtmlPreviewSanitizer.sanitize(html, true, css));
+        assertEquals(3, document.select("style").size());
+        assertEquals("p{color:red;}", document.select("style").get(0).data());
+        assertEquals("p{color:blue;}", document.select("style").get(1).data());
+        assertEquals("screen", document.select("style").get(2).attr("media"));
+        assertTrue(document.select("link, script").isEmpty());
+        assertTrue(Jsoup.parse(HtmlPreviewSanitizer.sanitize(html, false, css)).select("style, link").isEmpty());
     }
 
     @Test void serializesSupplementaryUnicodeWithoutSendingSurrogatesToWebView() {

@@ -36,23 +36,42 @@ On Windows:
 6. Use **Preview extraction** to test the selectors against the source HTML.
 7. Save the JSON profile with **Save JSON profile...**.
 
-Use **Preview CSS (embedded / inline)** to toggle a conservative subset of the
-page's presentation styles. Changing it reloads only the preview; selected profile
-fields and exclusions are retained, and extraction always uses the source HTML.
-Linked stylesheets (including local ones), images, fonts and other external resources
-remain blocked. CSS imports, URL values, variables, escapes and at-rules are discarded.
-This is an offline selection aid, not a full-fidelity browser rendering.
+Use **Preview CSS** to toggle the page's presentation styles, including linked CSS.
+The application reads relative `.css` files within the HTML folder (including saved-page
+subfolders). When a stylesheet is unavailable locally, HTTP(S) links can be fetched in
+the background. Relative web links use **Original page URL**, detected automatically
+from HTTrack comments or canonical/OG metadata when available; otherwise enter that URL
+and press **Reload CSS**. The CSS status shows how many sheets loaded and explains
+missing files or HTTP errors in its tooltip. Loaded sheets are cached for CSS toggles;
+**Reload CSS** fetches them again.
+
+Every sheet is filtered and embedded in the isolated preview in its original order.
+Common typography/layout declarations, `!important` and responsive `@media` rules are
+supported. CSS imports, URL values, variables, escapes, web fonts and other at-rules
+are discarded. Scripts, images and other embedded resources remain blocked. The CSS
+loader uses bounded requests without cookies or authentication, rejects private
+network addresses and unsafe redirects, and limits each sheet to 1 MiB (12 per page).
+This remains a selection aid, not a full-fidelity browser rendering. Changing CSS
+retains profile fields and exclusions; extraction always uses the original HTML.
 
 To remove advertising or other unwanted content, choose **Block to exclude**, click
 the block, optionally use **Select parent element**, and click **Add exclusion**.
+**All elements with the same classes** is selected by default: selecting an ad
+container proposes e.g. `div.ads.ads-holder.ads-middle.text-center` rather than a
+positional path. The match count tells you how many blocks it will exclude. Uncheck
+the option to target only the clicked block. If the clicked child has no classes,
+select its parent until you reach the classed container. A selector such as `.ads`
+can also be entered manually. Unique IDs/classes are preferred for title/navigation
+selectors too, falling back to source positions only when needed to distinguish nodes.
 Empty containers left behind by removed ad scripts have dashed placeholders so they
 can still be selected. Saved exclusions have red outlines. Select an entry and use
 **Remove selected** to undo it. You can edit the candidate selector before adding it;
 for example, `.ads` excludes every matching ad container. Use **Preview extraction**
 to check the result. Translator notes are kept unless explicitly excluded.
 
-For safety, the offline preview strips embedded scripts, iframes, remote images and
-external CSS and sets a restrictive Content Security Policy in both CSS modes.
+For safety, the preview strips embedded scripts, iframes and remote images and sets
+a restrictive Content Security Policy in both CSS modes. WebView itself cannot fetch
+resources; the application fetches only linked stylesheets when CSS is enabled.
 It does not execute the site's JavaScript or expose Java objects to the page.
 Picker selectors refer to the original DOM, so removing unsafe siblings from the
 preview does not change positional selectors used for extraction.
@@ -126,8 +145,10 @@ string, alongside accents, smart quotes, CJK, emoji and repeated advertising blo
 
 JUnit tests inspect EPUB packaging, XML, navigation, encoding detection, malformed
 input, exclusions, legacy JSON profiles, and CSS preview sanitization. Real WebView
-integration tests check Unicode rendering, CSS on/off, the picker, exclusion
-highlighting, and CSP resource blocking. `epubcheckSample` runs EPUBCheck against a
+integration tests check Unicode rendering, linked/responsive CSS on/off, the picker,
+class-wide exclusions across reordered chapters, and CSP resource blocking.
+Stylesheet loader tests cover local paths, original URL detection, link resolution,
+missing resources, filtering and loading limits. `epubcheckSample` runs EPUBCheck against a
 generated two-chapter EPUB. On a Linux machine without a display, use
 `xvfb-run -a ./gradlew test epubcheckSample` (requires Xvfb and JavaFX GTK libraries).
 

@@ -39,6 +39,10 @@ class WebViewPreviewTest {
     }
 
     private static WebEngine load(String html, boolean css) throws Exception {
+        return load(html, css, java.util.Map.of());
+    }
+
+    private static WebEngine load(String html, boolean css, java.util.Map<String, String> linkedCss) throws Exception {
         var loaded = new CompletableFuture<WebEngine>();
         onFx(() -> {
             var engine = new WebView().getEngine();
@@ -47,7 +51,7 @@ class WebViewPreviewTest {
                 if (state == Worker.State.FAILED) loaded.completeExceptionally(
                     engine.getLoadWorker().getException());
             });
-            engine.loadContent(HtmlPreviewSanitizer.sanitize(html, css), "text/html");
+            engine.loadContent(HtmlPreviewSanitizer.sanitize(html, css, linkedCss), "text/html");
             return null;
         });
         return loaded.get(20, TimeUnit.SECONDS);
@@ -73,7 +77,9 @@ class WebViewPreviewTest {
                 engine.executeScript("document.querySelectorAll('.ads')[1].firstElementChild.click()");
                 engine.executeScript("window.__ebookPicker.selectParent()");
                 String payload = (String) engine.executeScript("window.__ebookPicker.takeSelection()");
-                String selector = new ObjectMapper().readTree(payload).get("selector").asText();
+                var picked = new ObjectMapper().readTree(payload);
+                String selector = picked.get("selector").asText();
+                assertEquals("div.ads.ads-holder", picked.get("classSelector").asText());
                 var original = Jsoup.parse(html);
                 assertEquals(1, original.select(selector).size());
                 assertEquals("Advertisement two", original.selectFirst(selector).text());
@@ -82,6 +88,23 @@ class WebViewPreviewTest {
                 engine.executeScript("window.__ebookPicker.setExclusions([])");
                 assertEquals(0, ((Number) engine.executeScript(
                     "document.querySelectorAll('[data-ebook-excluded]').length")).intValue());
+                return null;
+            });
+        }
+    }
+
+    @Test void rendersLinkedResponsiveCssWithoutGivingWebViewResourceAccess() throws Exception {
+        String html = "<link rel='stylesheet' href='site.css'><p id='story'>Text</p>";
+        var styles = java.util.Map.of("site.css", "/* comment */ @import url(https://remote);"
+            + "@media screen and (min-width:0px) {p{color:rgb(20, 30, 40)!important;font-size:23px}}"
+            + "p{background-image:url(https://remote/pixel)}");
+        for (boolean css : new boolean[] {true, false}) {
+            var engine = load(html, css, styles);
+            onFx(() -> {
+                assertEquals(css ? "rgb(20, 30, 40)" : "rgb(0, 0, 0)", engine.executeScript(
+                    "getComputedStyle(document.querySelector('#story')).color"));
+                assertEquals("none", engine.executeScript(
+                    "getComputedStyle(document.querySelector('#story')).backgroundImage"));
                 return null;
             });
         }

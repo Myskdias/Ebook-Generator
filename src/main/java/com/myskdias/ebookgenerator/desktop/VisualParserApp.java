@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.Map;
+import javafx.concurrent.Task;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -36,6 +37,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.Toggle;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -70,6 +72,16 @@ public final class VisualParserApp extends Application {
     private Label openedFile;
     private Label encodingInfo;
     private CheckBox cssEnabled;
+    private TextField originalPageUrl;
+    private Label cssStatus;
+    private CheckBox groupExclusions;
+    private Label exclusionMatches;
+    private String exclusionSingle = "";
+    private String exclusionClasses = "";
+    private Task<LinkedCssLoader.Result> cssTask;
+    private LinkedCssLoader.Result cssCache;
+    private String cachedCssOrigin;
+    private int previewGeneration;
     private ListView<String> exclusions;
     private ToggleGroup roles;
 
@@ -93,8 +105,18 @@ public final class VisualParserApp extends Application {
         openedFile = new Label("No HTML file selected");
         encodingInfo = new Label();
         encodingInfo.setWrapText(true);
-        cssEnabled = new CheckBox("Preview CSS (embedded / inline)");
+        cssEnabled = new CheckBox("Preview CSS");
         cssEnabled.setOnAction(e -> reloadPreview());
+        originalPageUrl = new TextField();
+        originalPageUrl.setPromptText("https://site.example/novel/chapter.html");
+        originalPageUrl.setOnAction(e -> { cssCache = null; reloadPreview(); });
+        cssStatus = new Label("CSS disabled.");
+        cssStatus.setWrapText(true);
+        groupExclusions = new CheckBox("All elements with the same classes");
+        groupExclusions.setSelected(true);
+        groupExclusions.setDisable(true);
+        groupExclusions.setOnAction(e -> applyExclusionScope());
+        exclusionMatches = new Label("Select a block to exclude.");
         exclusions = new ListView<>();
         exclusions.setPrefHeight(95);
         roles = new ToggleGroup();
@@ -171,13 +193,20 @@ public final class VisualParserApp extends Application {
         Label heading = new Label("Parser profile");
         heading.setStyle("-fx-font-size: 19px; -fx-font-weight: bold;");
         panel.getChildren().addAll(heading, new Label("Profile name"), profileName,
-            new Label("Website domain"), domainName, encodingInfo, new Separator(),
+            new Label("Website domain"), domainName, encodingInfo,
+            new Label("Original page URL (for linked CSS)"), originalPageUrl);
+        Button reloadCss = new Button("Reload CSS");
+        reloadCss.disableProperty().bind(cssEnabled.selectedProperty().not());
+        reloadCss.setOnAction(e -> { cssCache = null; reloadPreview(); });
+        panel.getChildren().addAll(reloadCss, cssStatus, new Separator(),
             new Label("1. Select a field; 2. Click its element in the page."));
 
         addRole(panel, Role.TITLE, "Chapter title", "e.g. h2.chapter-title");
         addRole(panel, Role.CONTENT, "Chapter content", "e.g. div#chapter-content");
         addRole(panel, Role.NEXT, "Next chapter (optional)", "e.g. a.next-chapter");
         addRole(panel, Role.EXCLUDE, "Block to exclude (ads, etc.)", "e.g. .ads");
+        selectors.get(Role.EXCLUDE).textProperty().addListener((o, old, value) -> updateExclusionMatches());
+        panel.getChildren().addAll(groupExclusions, exclusionMatches);
 
         parentButton = new Button("Select parent element");
         parentButton.setOnAction(e -> chooseParent());
@@ -198,8 +227,9 @@ public final class VisualParserApp extends Application {
             "Click the whole chapter container, not only one paragraph. "
             + "Use 'Select parent element' if your click selects a child. "
             + "To exclude an ad, select its block (dashed boxes mark empty blocks), "
-            + "then Add exclusion. Red outlines mark excluded blocks. "
-            + "External stylesheets and resources stay blocked in both CSS modes.");
+            + "then Add exclusion. By default, all blocks with the same classes are excluded. "
+            + "Uncheck the option to target only this block. Red outlines mark exclusions. "
+            + "Linked CSS is filtered before display; scripts, images and fonts stay blocked.");
         explanation.setWrapText(true);
         panel.getChildren().addAll(explanation, new Separator());
 
@@ -258,6 +288,12 @@ public final class VisualParserApp extends Application {
             HtmlSource source = HtmlSource.read(path);
             sourcePath = path;
             sourceHtml = source.html();
+            cssCache = null;
+            originalPageUrl.setText(LinkedCssLoader.originalPage(sourceHtml).map(URI::toString).orElse(""));
+            exclusionSingle = "";
+            exclusionClasses = "";
+            groupExclusions.setDisable(true);
+            updateExclusionMatches();
             long replacements = source.replacementCharacters();
             encodingInfo.setText("Encoding: " + source.charset().name()
                 + (replacements == 0 ? "" : " — " + replacements
@@ -274,9 +310,87 @@ public final class VisualParserApp extends Application {
 
     private void reloadPreview() {
         if (sourceHtml == null) return;
-        browser.getEngine().loadContent(HtmlPreviewSanitizer.sanitize(sourceHtml, cssEnabled.isSelected()),
-            "text/html");
+        if (cssTask != null) cssTask.cancel(true);
+        int generation = ++previewGeneration;
+        if (!cssEnabled.isSelected()) {
+            cssStatus.setText("CSS disabled.");
+            cssStatus.setTooltip(null);
+            displayPreview(false, Map.of());
+            return;
+        }
+        String originText = originalPageUrl.getText().strip();
+        URI origin;
+        try {
+            origin = originText.isEmpty() ? null : URI.create(originText);
+            if (origin != null && (origin.getHost() == null || origin.getUserInfo() != null
+                || !("https".equalsIgnoreCase(origin.getScheme()) || "http".equalsIgnoreCase(origin.getScheme())))) {
+                throw new IllegalArgumentException();
+            }
+        } catch (IllegalArgumentException ex) {
+            cssStatus.setText("Enter an HTTP(S) original page URL, or leave it blank for local CSS.");
+            displayPreview(true, Map.of());
+            return;
+        }
+        if (cssCache != null && originText.equals(cachedCssOrigin)) {
+            showCssResult(cssCache);
+            displayPreview(true, cssCache.styles());
+            return;
+        }
+        // Keep the new document usable while CSS is fetched away from the application thread.
+        displayPreview(true, Map.of());
+        cssStatus.setText("Loading linked stylesheets...");
+        cssStatus.setTooltip(null);
+        String html = sourceHtml;
+        Path path = sourcePath;
+        Task<LinkedCssLoader.Result> task = new Task<>() {
+            @Override protected LinkedCssLoader.Result call() throws InterruptedException {
+                return new LinkedCssLoader().load(html, path, origin);
+            }
+        };
+        cssTask = task;
+        task.setOnSucceeded(e -> {
+            if (generation != previewGeneration) return;
+            cssCache = task.getValue();
+            cachedCssOrigin = originText;
+            showCssResult(cssCache);
+            displayPreview(true, cssCache.styles());
+        });
+        task.setOnFailed(e -> {
+            if (generation == previewGeneration) cssStatus.setText("Could not load linked CSS: "
+                + task.getException().getMessage());
+        });
+        Thread.ofVirtual().start(task);
+    }
+
+    private void displayPreview(boolean enableCss, Map<String, String> styles) {
+        browser.getEngine().loadContent(HtmlPreviewSanitizer.sanitize(sourceHtml, enableCss, styles), "text/html");
         status.setText("Loading HTML preview...");
+    }
+
+    private void showCssResult(LinkedCssLoader.Result result) {
+        cssStatus.setText("Linked CSS: " + result.styles().size() + " loaded, " + result.messages().size()
+            + " unavailable." + (result.messages().isEmpty() ? "" : " Hover for details."));
+        cssStatus.setTooltip(new Tooltip(result.summary()));
+    }
+
+    private void applyExclusionScope() {
+        if (exclusionSingle.isEmpty()) return;
+        selectors.get(Role.EXCLUDE).setText(groupExclusions.isSelected() && !exclusionClasses.isEmpty()
+            ? exclusionClasses : exclusionSingle);
+    }
+
+    private void updateExclusionMatches() {
+        String selector = selectors.get(Role.EXCLUDE).getText().strip();
+        if (sourceHtml == null || selector.isEmpty()) {
+            exclusionMatches.setText("Select a block to exclude.");
+            return;
+        }
+        try {
+            int count = Jsoup.parse(sourceHtml).select(selector).size();
+            exclusionMatches.setText(count + " matching element(s) in this chapter.");
+        } catch (RuntimeException ex) {
+            exclusionMatches.setText("Invalid exclusion selector.");
+        }
     }
 
     private void addExclusion() {
@@ -315,7 +429,14 @@ public final class VisualParserApp extends Application {
             String selector = data.path("selector").asText("");
             if (selector.isBlank()) return;
             Role role = activeRole();
-            selectors.get(role).setText(selector);
+            if (role == Role.EXCLUDE) {
+                exclusionSingle = selector;
+                exclusionClasses = data.path("classSelector").asText("");
+                groupExclusions.setDisable(exclusionClasses.isEmpty());
+                applyExclusionScope();
+            } else {
+                selectors.get(role).setText(selector);
+            }
             String text = data.path("text").asText("");
             if (text.length() > 75) text = text.substring(0, 75) + "...";
             status.setText(role + " selected: " + selector + "  —  " + text);
@@ -429,5 +550,6 @@ public final class VisualParserApp extends Application {
     @Override
     public void stop() {
         if (selectionPoller != null) selectionPoller.stop();
+        if (cssTask != null) cssTask.cancel(true);
     }
 }
