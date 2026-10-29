@@ -11,7 +11,7 @@ import javafx.stage.FileChooser;
 
 /** Remember chooser folders independently for HTML and profiles, including across restarts. */
 final class DirectoryHistory {
-    enum Kind { HTML, PROFILE }
+    enum Kind { HTML, PROFILE, EPUB }
     private static final String LAST = "lastDirectory";
     private final Preferences preferences;
     private final Map<String, String> session = new HashMap<>();
@@ -58,7 +58,11 @@ final class DirectoryHistory {
     }
 
     private static String key(Kind kind) {
-        return kind == Kind.HTML ? "htmlDirectory" : "profileDirectory";
+        return switch (kind) {
+            case HTML -> "htmlDirectory";
+            case PROFILE -> "profileDirectory";
+            case EPUB -> "epubDirectory";
+        };
     }
 
     private String read(String key) {

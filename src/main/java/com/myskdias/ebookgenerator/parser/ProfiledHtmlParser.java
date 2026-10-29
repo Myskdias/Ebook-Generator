@@ -3,7 +3,6 @@ package com.myskdias.ebookgenerator.parser;
 import com.myskdias.ebookgenerator.model.Chapter;
 import java.net.URI;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import org.jsoup.Jsoup;
@@ -65,26 +64,7 @@ public final class ProfiledHtmlParser {
                 "Content selector matched no readable text: " + profile.contentSelector());
         }
 
-        Optional<URI> next = Optional.empty();
-        if (!profile.nextChapterSelector().isBlank()) {
-            Element link = document.selectFirst(profile.nextChapterSelector());
-            if (link != null) {
-                String target = link.hasAttr("href") ? link.attr("href") : link.attr("data-href");
-                if (!target.isBlank()) {
-                    try {
-                        URI resolved = sourceUri.resolve(target.strip()).normalize();
-                        String scheme = resolved.getScheme() == null
-                            ? "" : resolved.getScheme().toLowerCase(Locale.ROOT);
-                        if ((scheme.equals("http") || scheme.equals("https"))
-                            && resolved.getHost() != null && !resolved.equals(sourceUri.normalize())) {
-                            next = Optional.of(resolved);
-                        }
-                    } catch (IllegalArgumentException ex) {
-                        // A bad link should not prevent the chapter itself from being imported.
-                    }
-                }
-            }
-        }
+        Optional<URI> next = ChapterLinks.next(document, sourceUri, profile.nextChapterSelector(), false);
         return new ParsedChapter(new Chapter(titleElement.text().strip(), text), next);
     }
 }

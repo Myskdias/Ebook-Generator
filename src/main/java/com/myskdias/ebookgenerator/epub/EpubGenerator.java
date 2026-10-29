@@ -12,6 +12,8 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
+import java.util.concurrent.CancellationException;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -27,9 +29,14 @@ public final class EpubGenerator {
         """;
 
     public Path generate(Book book, Path output) throws IOException {
+        return generate(book, output, () -> false);
+    }
+
+    public Path generate(Book book, Path output, BooleanSupplier cancelled) throws IOException {
         if (book == null || output == null) {
             throw new IllegalArgumentException("Book and output path are required");
         }
+        checkCancelled(cancelled);
         Path destination = output.toAbsolutePath().normalize();
         Path parent = destination.getParent();
         Files.createDirectories(parent);
@@ -43,10 +50,12 @@ public final class EpubGenerator {
                 add(zip, "OEBPS/nav.xhtml", navigation(book));
                 add(zip, "OEBPS/content.opf", packageDocument(book));
                 for (int index = 0; index < book.chapters().size(); index++) {
+                    checkCancelled(cancelled);
                     add(zip, "OEBPS/" + chapterFile(index), chapterDocument(book, book.chapters().get(index)));
                 }
             }
 
+            checkCancelled(cancelled);
             try {
                 Files.move(temporary, destination,
                     StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -56,6 +65,12 @@ public final class EpubGenerator {
             return destination;
         } finally {
             Files.deleteIfExists(temporary);
+        }
+    }
+
+    private static void checkCancelled(BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+            throw new CancellationException("Generation cancelled");
         }
     }
 

@@ -7,6 +7,7 @@ import com.myskdias.ebookgenerator.model.Chapter;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -71,6 +72,19 @@ class EpubGeneratorTest {
             () -> new Book("Novel", "Writer", "en", List.of()));
         assertThrows(IllegalArgumentException.class,
             () -> new Book("Novel", "Writer", "invalid_language", List.of(new Chapter("1", "text"))));
+    }
+
+    @Test void cancellationDuringWritingKeepsThePreviousBookAndRemovesTemporaryFiles() throws Exception {
+        Path output = Files.writeString(temp.resolve("book.epub"), "Previous book");
+        Book book = new Book("Test", "Writer", "en", List.of(new Chapter("1", "Text")));
+        assertThrows(java.util.concurrent.CancellationException.class, () -> new EpubGenerator().generate(book, output, () -> {
+            try (var files = Files.list(temp)) {
+                // Cancel after the writer has started creating a new file, before publication.
+                return files.anyMatch(path -> !path.equals(output));
+            } catch (java.io.IOException ex) { throw new java.io.UncheckedIOException(ex); }
+        }));
+        assertEquals("Previous book", Files.readString(output));
+        try (var files = Files.list(temp)) { assertEquals(List.of(output), files.toList()); }
     }
 
     private static String read(ZipFile zip, String entry) throws Exception {

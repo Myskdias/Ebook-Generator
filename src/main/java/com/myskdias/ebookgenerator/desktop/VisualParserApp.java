@@ -32,6 +32,8 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Toggle;
@@ -92,6 +94,8 @@ public final class VisualParserApp extends Application {
     private Timeline selectionPoller;
     private String selectionScript;
     private Button parentButton;
+    private BookGenerationPane generationPane;
+    private TabPane workspaceTabs;
 
     public VisualParserApp() {
         this(DirectoryHistory.forUser());
@@ -190,8 +194,12 @@ public final class VisualParserApp extends Application {
         selectionPoller.setCycleCount(Animation.INDEFINITE);
         selectionPoller.play();
 
-        primaryStage.setTitle("Ebook Generator — Visual parser editor");
-        primaryStage.setScene(new Scene(layout, 1260, 830));
+        generationPane = new BookGenerationPane(directoryHistory);
+        workspaceTabs = new TabPane(new Tab("Generate EPUB", generationPane), new Tab("Profile editor", layout));
+        workspaceTabs.setId("workspace-tabs");
+        workspaceTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        primaryStage.setTitle("Ebook Generator");
+        primaryStage.setScene(new Scene(workspaceTabs, 1260, 830));
         primaryStage.setMinWidth(900);
         primaryStage.setMinHeight(650);
         primaryStage.show();
@@ -252,7 +260,16 @@ public final class VisualParserApp extends Application {
         Button save = new Button("Save JSON profile...");
         save.setMaxWidth(Double.MAX_VALUE);
         save.setOnAction(e -> saveProfile());
-        panel.getChildren().addAll(inspect, save, new Label("Extracted chapter"), preview);
+        Button generate = new Button("Generate EPUB from this chapter...");
+        generate.setOnAction(e -> {
+            if (sourcePath == null) { status.setText("Open a local HTML chapter first."); return; }
+            try {
+                generationPane.useProfile(buildProfile(true), "Current editor profile");
+                generationPane.useFirstChapter(sourcePath);
+                workspaceTabs.getSelectionModel().select(0);
+            } catch (Exception ex) { status.setText(ex.getMessage()); }
+        });
+        panel.getChildren().addAll(inspect, save, generate, new Label("Extracted chapter"), preview);
         VBox.setVgrow(preview, Priority.ALWAYS);
 
         for (Toggle toggle : roles.getToggles()) {
@@ -577,5 +594,6 @@ public final class VisualParserApp extends Application {
     public void stop() {
         if (selectionPoller != null) selectionPoller.stop();
         if (cssTask != null) cssTask.cancel(true);
+        if (generationPane != null) generationPane.cancelGeneration();
     }
 }

@@ -1,0 +1,8 @@
+{
+  "name": "NovelFull (web)",
+  "domain": "novelfull.net",
+  "titleSelector": "h1.chapter",
+  "contentSelector": "#chapter-content",
+  "nextChapterSelector": "a[data-nav=next]",
+  "excludedSelectors": [".ads"]
+}

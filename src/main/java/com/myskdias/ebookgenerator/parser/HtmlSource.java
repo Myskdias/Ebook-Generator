@@ -13,10 +13,18 @@ import org.jsoup.Jsoup;
 /** One decoding path for the editor, profiled CLI, and generic importer. */
 public record HtmlSource(String html, Charset charset) {
     public static HtmlSource read(Path path) throws IOException {
-        byte[] bytes = Files.readAllBytes(path);
+        return decode(Files.readAllBytes(path), null, path.getFileName().toString());
+    }
+
+    /** An HTTP charset, when supplied, takes priority over HTML metadata; a BOM still wins. */
+    public static HtmlSource decode(byte[] bytes, String httpCharset, String sourceName) throws IOException {
         // Jsoup detects a BOM first, then HTML charset metadata, then defaults to UTF-8.
-        Charset charset = Jsoup.parse(new ByteArrayInputStream(bytes), null,
-            path.toUri().toString()).charset();
+        Charset charset;
+        try {
+            charset = Jsoup.parse(new ByteArrayInputStream(bytes), httpCharset, "").charset();
+        } catch (IllegalArgumentException ex) {
+            throw new IOException("Unsupported HTML encoding in " + sourceName, ex);
+        }
         try {
             String html = charset.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
@@ -25,7 +33,7 @@ public record HtmlSource(String html, Charset charset) {
             if (html.startsWith("\uFEFF")) html = html.substring(1);
             return new HtmlSource(html, charset);
         } catch (CharacterCodingException ex) {
-            throw new IOException("Cannot decode " + path.getFileName() + " as " + charset.name()
+            throw new IOException("Cannot decode " + sourceName + " as " + charset.name()
                 + ". Check the file's declared encoding; invalid bytes were not replaced.", ex);
         }
     }

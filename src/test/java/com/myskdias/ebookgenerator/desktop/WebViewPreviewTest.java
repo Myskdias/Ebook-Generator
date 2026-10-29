@@ -2,6 +2,8 @@ package com.myskdias.ebookgenerator.desktop;
 
 import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myskdias.ebookgenerator.BookGenerationService;
+import com.myskdias.ebookgenerator.parser.ParserProfile;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
@@ -12,18 +14,27 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
 import javafx.concurrent.Worker;
+import javafx.concurrent.WorkerStateEvent;
+import javafx.concurrent.Task;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
+import javafx.scene.control.TabPane;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.Label;
+import javafx.scene.Scene;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import javafx.stage.Stage;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /** Exercises the actual JavaFX string-to-WebKit boundary, not just Jsoup round trips. */
 class WebViewPreviewTest {
+    @TempDir Path temp;
     @BeforeAll static void startToolkit() throws Exception {
         var started = new CompletableFuture<Void>();
         Platform.startup(() -> {
@@ -61,12 +72,86 @@ class WebViewPreviewTest {
         return loaded.get(20, TimeUnit.SECONDS);
     }
 
+    private static CompletableFuture<BookGenerationService.Result> completion(Task<BookGenerationService.Result> task) {
+        var completed = new CompletableFuture<BookGenerationService.Result>();
+        task.addEventHandler(WorkerStateEvent.WORKER_STATE_SUCCEEDED, e -> completed.complete(task.getValue()));
+        task.addEventHandler(WorkerStateEvent.WORKER_STATE_FAILED, e -> completed.completeExceptionally(task.getException()));
+        return completed;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test void generationScreenProducesLimitedAndCompleteBooksFromOneChapter() throws Exception {
+        for (int i = 1; i <= 3; i++) {
+            Files.writeString(temp.resolve(i + ".html"), "<h1>Chapter " + i + "</h1><main><p>Page " + i + ".</p></main>"
+                + (i < 3 ? "<a class='next' href='" + (i + 1) + ".html'>Next</a>" : ""));
+        }
+        var app = new VisualParserApp(new DirectoryHistory(null));
+        Stage stage = onFx(() -> { var window = new Stage(); app.start(window); return window; });
+        try {
+            var limited = onFx(() -> {
+                var tabs = (TabPane) stage.getScene().lookup("#workspace-tabs");
+                assertEquals("Generate EPUB", tabs.getSelectionModel().getSelectedItem().getText());
+                var pane = (BookGenerationPane) tabs.getSelectionModel().getSelectedItem().getContent();
+                pane.useProfile(new ParserProfile("Site", "example.com", "h1", "main", ".next"), "Test");
+                pane.useFirstChapter(temp.resolve("1.html"));
+                var scope = (ComboBox<BookGenerationPane.Scope>) stage.getScene().lookup("#generation-scope");
+                var count = (Spinner<Integer>) stage.getScene().lookup("#generation-count");
+                scope.setValue(BookGenerationPane.Scope.COUNT);
+                count.getEditor().setText("0");
+                assertThrows(IllegalArgumentException.class, () -> pane.startGeneration(temp.resolve("invalid.epub")));
+                count.getEditor().setText("2");
+                return completion(pane.startGeneration(temp.resolve("limited.epub")));
+            });
+            assertEquals(2, limited.get(20, TimeUnit.SECONDS).chapters());
+            var whole = onFx(() -> {
+                var tabs = (TabPane) stage.getScene().lookup("#workspace-tabs");
+                var pane = (BookGenerationPane) tabs.getSelectionModel().getSelectedItem().getContent();
+                ((ComboBox<BookGenerationPane.Scope>) stage.getScene().lookup("#generation-scope"))
+                    .setValue(BookGenerationPane.Scope.ALL);
+                return completion(pane.startGeneration(temp.resolve("whole.epub")));
+            });
+            assertEquals(3, whole.get(20, TimeUnit.SECONDS).chapters());
+            try (var zip = new java.util.zip.ZipFile(temp.resolve("whole.epub").toFile())) {
+                assertNotNull(zip.getEntry("OEBPS/chapter-0003.xhtml"));
+                assertNull(zip.getEntry("OEBPS/chapter-0004.xhtml"));
+            }
+        } finally { onFx(() -> { app.stop(); stage.close(); return null; }); }
+    }
+
+    @Test void generationCancelInterruptsTheWorkerAndRestoresTheForm() throws Exception {
+        Path first = Files.writeString(temp.resolve("1.html"), "<h1>Title</h1><main>Text</main>");
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var pane = onFx(() -> new BookGenerationPane(new DirectoryHistory(null), (request, progress, cancelled) -> {
+            entered.countDown();
+            new java.util.concurrent.CountDownLatch(1).await(); // Only cancellation should release this worker.
+            throw new AssertionError("Worker should have been interrupted");
+        }));
+        Stage stage = onFx(() -> { var window = new Stage(); window.setScene(new Scene(pane, 900, 850)); window.show(); return window; });
+        try {
+            var completed = onFx(() -> {
+                pane.useFirstChapter(first);
+                pane.useProfile(new ParserProfile("Site", "example.com", "h1", "main", ".next"), "Test");
+                return completion(pane.startGeneration(temp.resolve("cancelled.epub")));
+            });
+            assertTrue(entered.await(10, TimeUnit.SECONDS));
+            onFx(() -> { pane.cancelGeneration(); return null; });
+            assertThrows(java.util.concurrent.ExecutionException.class, () -> completed.get(10, TimeUnit.SECONDS));
+            onFx(() -> {
+                assertTrue(((Label) stage.getScene().lookup("#generation-status")).getText().contains("cancelled"));
+                assertFalse(stage.getScene().lookup("#generate-epub").isDisabled());
+                return null;
+            });
+            assertFalse(Files.exists(temp.resolve("cancelled.epub")));
+        } finally { onFx(() -> { pane.cancelGeneration(); stage.close(); return null; }); }
+    }
+
     @Test void editorAllowsUngroupingBeforeAndAfterSelectingClasslessElements() throws Exception {
         var app = new VisualParserApp(new DirectoryHistory(null));
         var loaded = new CompletableFuture<Void>();
         Stage stage = onFx(() -> {
             var window = new Stage();
             app.start(window);
+            ((TabPane) window.getScene().lookup("#workspace-tabs")).getSelectionModel().select(1);
             try {
                 var group = (CheckBox) window.getScene().lookup("#group-exclusions");
                 assertFalse(group.isDisabled());
