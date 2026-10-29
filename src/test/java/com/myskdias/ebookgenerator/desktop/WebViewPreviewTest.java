@@ -12,8 +12,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
 import javafx.concurrent.Worker;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
+import javafx.stage.Stage;
 import org.jsoup.Jsoup;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -55,6 +59,72 @@ class WebViewPreviewTest {
             return null;
         });
         return loaded.get(20, TimeUnit.SECONDS);
+    }
+
+    @Test void editorAllowsUngroupingBeforeAndAfterSelectingClasslessElements() throws Exception {
+        var app = new VisualParserApp(new DirectoryHistory(null));
+        var loaded = new CompletableFuture<Void>();
+        Stage stage = onFx(() -> {
+            var window = new Stage();
+            app.start(window);
+            try {
+                var group = (CheckBox) window.getScene().lookup("#group-exclusions");
+                assertFalse(group.isDisabled());
+                assertTrue(group.isSelected());
+                group.fire();
+                assertFalse(group.isSelected(), "The user must be able to uncheck before selecting a block");
+                var browser = (WebView) window.getScene().lookup("WebView");
+                browser.getEngine().getLoadWorker().stateProperty().addListener((o, old, state) -> {
+                    if (state == Worker.State.SUCCEEDED) loaded.complete(null);
+                    if (state == Worker.State.FAILED) loaded.completeExceptionally(
+                        browser.getEngine().getLoadWorker().getException());
+                });
+                app.loadHtml(Path.of("src/test/resources/chapters/novelfull-sample.html"));
+            } catch (Throwable ex) {
+                app.stop();
+                window.close();
+                throw ex;
+            }
+            return window;
+        });
+        try {
+            loaded.get(20, TimeUnit.SECONDS);
+            onFx(() -> {
+                var group = (CheckBox) stage.getScene().lookup("#group-exclusions");
+                var input = (TextField) stage.getScene().lookup("#selector-exclude");
+                var role = (ToggleButton) stage.getScene().lookup("#role-exclude");
+                var browser = (WebView) stage.getScene().lookup("WebView");
+                role.fire();
+                // A paragraph without a class was the case that disabled the checkbox.
+                browser.getEngine().executeScript("document.querySelector('#chapter-content > p').click()");
+                app.pollSelection();
+                String paragraph = input.getText();
+                assertFalse(group.isDisabled());
+                assertFalse(group.isSelected());
+                group.fire();
+                assertTrue(group.isSelected());
+                assertEquals(paragraph, input.getText(), "Classless selection keeps its individual selector");
+                group.fire();
+                assertFalse(group.isSelected());
+                browser.getEngine().executeScript("document.querySelector('.ads').click()");
+                app.pollSelection();
+                String single = input.getText();
+                assertNotEquals("div.ads.ads-holder", single);
+                group.fire();
+                assertEquals("div.ads.ads-holder", input.getText());
+                group.fire();
+                assertEquals(single, input.getText());
+                browser.getEngine().executeScript("window.__ebookPicker.selectParent()");
+                app.pollSelection();
+                assertFalse(group.isSelected(), "Parent selection must preserve the user's scope choice");
+                app.loadHtml(Path.of("src/test/resources/chapters/chapter-01.html"));
+                assertFalse(group.isDisabled());
+                assertFalse(group.isSelected(), "Opening another HTML file must preserve the scope choice");
+                return null;
+            });
+        } finally {
+            onFx(() -> { app.stop(); stage.close(); return null; });
+        }
     }
 
     @Test void preservesActualWebViewUnicodeAndPickerAcrossBothCssModes() throws Exception {

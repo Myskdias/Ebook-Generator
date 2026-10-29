@@ -14,11 +14,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.Map;
-import javafx.concurrent.Task;
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Application;
+import javafx.concurrent.Task;
 import javafx.concurrent.Worker;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
@@ -63,6 +63,7 @@ public final class VisualParserApp extends Application {
     private final ProfiledHtmlParser parser = new ProfiledHtmlParser();
     private final ObjectMapper json = new ObjectMapper();
     private final Map<Role, TextField> selectors = new EnumMap<>(Role.class);
+    private final DirectoryHistory directoryHistory;
 
     private WebView browser;
     private TextField profileName;
@@ -92,6 +93,14 @@ public final class VisualParserApp extends Application {
     private String selectionScript;
     private Button parentButton;
 
+    public VisualParserApp() {
+        this(DirectoryHistory.forUser());
+    }
+
+    VisualParserApp(DirectoryHistory directoryHistory) {
+        this.directoryHistory = directoryHistory;
+    }
+
     @Override
     public void start(Stage primaryStage) {
         stage = primaryStage;
@@ -113,10 +122,13 @@ public final class VisualParserApp extends Application {
         cssStatus = new Label("CSS disabled.");
         cssStatus.setWrapText(true);
         groupExclusions = new CheckBox("All elements with the same classes");
+        groupExclusions.setId("group-exclusions");
         groupExclusions.setSelected(true);
-        groupExclusions.setDisable(true);
+        groupExclusions.setTooltip(new Tooltip("Blocks without classes keep their individual selector. "
+            + "Your choice is kept when selecting another block or opening another page."));
         groupExclusions.setOnAction(e -> applyExclusionScope());
         exclusionMatches = new Label("Select a block to exclude.");
+        exclusionMatches.setWrapText(true);
         exclusions = new ListView<>();
         exclusions.setPrefHeight(95);
         roles = new ToggleGroup();
@@ -258,11 +270,13 @@ public final class VisualParserApp extends Application {
 
     private void addRole(VBox panel, Role role, String label, String prompt) {
         ToggleButton choice = new ToggleButton(label);
+        choice.setId("role-" + role.name().toLowerCase(java.util.Locale.ROOT));
         choice.setUserData(role);
         choice.setToggleGroup(roles);
         choice.setMaxWidth(Double.MAX_VALUE);
 
         TextField input = new TextField();
+        input.setId("selector-" + role.name().toLowerCase(java.util.Locale.ROOT));
         input.setPromptText(prompt);
         selectors.put(role, input);
         panel.getChildren().addAll(choice, input);
@@ -280,32 +294,37 @@ public final class VisualParserApp extends Application {
     private void openHtml() {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Choose a local HTML chapter");
+        directoryHistory.configure(chooser, DirectoryHistory.Kind.HTML);
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("HTML files", "*.html", "*.htm"));
         java.io.File file = chooser.showOpenDialog(stage);
         if (file == null) return;
+        directoryHistory.remember(DirectoryHistory.Kind.HTML, file.toPath());
         try {
-            Path path = file.toPath();
-            HtmlSource source = HtmlSource.read(path);
-            sourcePath = path;
-            sourceHtml = source.html();
-            cssCache = null;
-            originalPageUrl.setText(LinkedCssLoader.originalPage(sourceHtml).map(URI::toString).orElse(""));
-            exclusionSingle = "";
-            exclusionClasses = "";
-            groupExclusions.setDisable(true);
-            updateExclusionMatches();
-            long replacements = source.replacementCharacters();
-            encodingInfo.setText("Encoding: " + source.charset().name()
-                + (replacements == 0 ? "" : " — " + replacements
-                    + " replacement character(s) already in the source; re-export the HTML to recover them."));
-            String baseName = file.getName().replaceFirst("(?i)\\.html?$", "");
-            if (profileName.getText().isBlank()) profileName.setText(baseName);
-            openedFile.setText(file.getName());
-            preview.clear();
-            reloadPreview();
+            loadHtml(file.toPath());
         } catch (IOException ex) {
             report("Could not read the HTML file", ex);
         }
+    }
+
+    void loadHtml(Path path) throws IOException {
+        HtmlSource source = HtmlSource.read(path);
+        sourcePath = path;
+        sourceHtml = source.html();
+        cssCache = null;
+        originalPageUrl.setText(LinkedCssLoader.originalPage(sourceHtml).map(URI::toString).orElse(""));
+        exclusionSingle = "";
+        exclusionClasses = "";
+        updateExclusionMatches();
+        long replacements = source.replacementCharacters();
+        encodingInfo.setText("Encoding: " + source.charset().name()
+            + (replacements == 0 ? "" : " — " + replacements
+                + " replacement character(s) already in the source; re-export the HTML to recover them."));
+        String filename = path.getFileName().toString();
+        String baseName = filename.replaceFirst("(?i)\\.html?$", "");
+        if (profileName.getText().isBlank()) profileName.setText(baseName);
+        openedFile.setText(filename);
+        preview.clear();
+        reloadPreview();
     }
 
     private void reloadPreview() {
@@ -377,6 +396,7 @@ public final class VisualParserApp extends Application {
         if (exclusionSingle.isEmpty()) return;
         selectors.get(Role.EXCLUDE).setText(groupExclusions.isSelected() && !exclusionClasses.isEmpty()
             ? exclusionClasses : exclusionSingle);
+        updateExclusionMatches();
     }
 
     private void updateExclusionMatches() {
@@ -387,7 +407,10 @@ public final class VisualParserApp extends Application {
         }
         try {
             int count = Jsoup.parse(sourceHtml).select(selector).size();
-            exclusionMatches.setText(count + " matching element(s) in this chapter.");
+            boolean classless = groupExclusions.isSelected() && exclusionClasses.isEmpty()
+                && !exclusionSingle.isEmpty() && selector.equals(exclusionSingle);
+            exclusionMatches.setText(count + " matching element(s) in this chapter."
+                + (classless ? " This block has no classes; only this element is targeted." : ""));
         } catch (RuntimeException ex) {
             exclusionMatches.setText("Invalid exclusion selector.");
         }
@@ -419,7 +442,7 @@ public final class VisualParserApp extends Application {
         }
     }
 
-    private void pollSelection() {
+    void pollSelection() {
         if (sourceHtml == null) return;
         try {
             Object value = browser.getEngine().executeScript(
@@ -432,14 +455,13 @@ public final class VisualParserApp extends Application {
             if (role == Role.EXCLUDE) {
                 exclusionSingle = selector;
                 exclusionClasses = data.path("classSelector").asText("");
-                groupExclusions.setDisable(exclusionClasses.isEmpty());
                 applyExclusionScope();
             } else {
                 selectors.get(role).setText(selector);
             }
             String text = data.path("text").asText("");
             if (text.length() > 75) text = text.substring(0, 75) + "...";
-            status.setText(role + " selected: " + selector + "  —  " + text);
+            status.setText(role + " selected: " + selectors.get(role).getText() + "  —  " + text);
         } catch (Exception ex) {
             // WebEngine can briefly be unavailable while a document is loading.
             if (browser.getEngine().getLoadWorker().getState() == Worker.State.SUCCEEDED) {
@@ -503,11 +525,13 @@ public final class VisualParserApp extends Application {
             }
             FileChooser chooser = new FileChooser();
             chooser.setTitle("Save parser profile");
+            directoryHistory.configure(chooser, DirectoryHistory.Kind.PROFILE);
             chooser.getExtensionFilters().add(
                 new FileChooser.ExtensionFilter("Parser profile (*.json)", "*.json"));
             chooser.setInitialFileName(profile.domain().replaceAll("[^a-z0-9.-]", "_") + ".json");
             java.io.File file = chooser.showSaveDialog(stage);
             if (file == null) return;
+            directoryHistory.remember(DirectoryHistory.Kind.PROFILE, file.toPath());
             store.save(file.toPath(), profile);
             status.setText("Profile saved: " + file.getAbsolutePath());
         } catch (Exception ex) {
@@ -518,10 +542,12 @@ public final class VisualParserApp extends Application {
     private void loadProfile() {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Load a parser profile");
+        directoryHistory.configure(chooser, DirectoryHistory.Kind.PROFILE);
         chooser.getExtensionFilters().add(
             new FileChooser.ExtensionFilter("Parser profile (*.json)", "*.json"));
         java.io.File file = chooser.showOpenDialog(stage);
         if (file == null) return;
+        directoryHistory.remember(DirectoryHistory.Kind.PROFILE, file.toPath());
         try {
             ParserProfile profile = store.load(file.toPath());
             profileName.setText(profile.name());

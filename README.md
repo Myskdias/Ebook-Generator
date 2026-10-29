@@ -36,6 +36,13 @@ On Windows:
 6. Use **Preview extraction** to test the selectors against the source HTML.
 7. Save the JSON profile with **Save JSON profile...**.
 
+File dialogs remember the last HTML folder and the last profile folder separately,
+including after restarting the editor. Loading and saving profiles share the profile
+folder. The first dialog of either kind can reuse the most recently chosen folder;
+cancelling a dialog does not reset it. If a saved folder has been removed, the dialog
+starts in its nearest available parent. Folder history is stored in local OS user
+preferences; if that store is unavailable, it is still retained for the current session.
+
 Use **Preview CSS** to toggle the page's presentation styles, including linked CSS.
 The application reads relative `.css` files within the HTML folder (including saved-page
 subfolders). When a stylesheet is unavailable locally, HTTP(S) links can be fetched in
@@ -63,6 +70,9 @@ the option to target only the clicked block. If the clicked child has no classes
 select its parent until you reach the classed container. A selector such as `.ads`
 can also be entered manually. Unique IDs/classes are preferred for title/navigation
 selectors too, falling back to source positions only when needed to distinguish nodes.
+The checkbox always remains usable, even before selecting anything or when a block
+has no classes. Its choice is kept when selecting another block or opening another
+HTML page. Blocks without classes keep their individual selector in either mode.
 Empty containers left behind by removed ad scripts have dashed placeholders so they
 can still be selected. Saved exclusions have red outlines. Select an entry and use
 **Remove selected** to undo it. You can edit the candidate selector before adding it;
